@@ -4,9 +4,9 @@
 # Tarih: 2026
 # ============================================================================
 # Kullanim (tek komut):
-#   iex (irm 'https://raw.githubusercontent.com/bayt-support/sql-server-iex/main/install-online.ps1')
+#   iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 # veya:
-#   iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/bayt-support/sql-server-iex/main/install-online.ps1')
+#   iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -21,7 +21,7 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 $Script:SAPassword       = "Bay_T252!"
 $Script:ScriptVersion    = "2.0"
 $Script:TempBase         = "$env:TEMP\BaytSqlInstall"
-$Script:ScriptUrl        = "https://raw.githubusercontent.com/bayt-support/sql-server-iex/main/install-online.ps1"
+$Script:ScriptUrl        = "https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1"
 
 # SQL Server indirme bilgileri
 # Type: "Direct" = dogrudan extract edilebilir installer (.exe /x: ile)
@@ -98,6 +98,17 @@ $Script:SqlDownloadInfo = @{
 
 # SQL Native Client 2012 URL
 $Script:NativeClientUrl = "https://download.microsoft.com/download/F/E/D/FEDB200F-DE2A-46D8-B661-D019DFE9D470/ENU/x64/sqlncli.msi"
+
+# .NET Framework 4.8.1 indirme URL
+$Script:DotNet481Url = "https://go.microsoft.com/fwlink/?linkid=2203306"
+
+# Script dizinini belirle (yerel calisma icin VC++ dosyalarini bulmak uzere)
+$Script:ScriptDir = $null
+if ($PSScriptRoot) {
+    $Script:ScriptDir = $PSScriptRoot
+} elseif ($MyInvocation.MyCommand.Path) {
+    $Script:ScriptDir = Split-Path $MyInvocation.MyCommand.Path -Parent
+}
 #endregion
 
 # ============================================================================
@@ -144,7 +155,8 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 function Write-Banner {
     Write-Host ""
     Write-Host "================================================================" -ForegroundColor Cyan
-    Write-Host "    Bayt Support SQL Server Otomatik Kurulum v$($Script:ScriptVersion)" -ForegroundColor Cyan
+    Write-Host "    Bayt Support Otomatik Kurulum v$($Script:ScriptVersion)" -ForegroundColor Cyan
+    Write-Host "    (VC++ Runtimes + .NET Framework + SQL Server Express)" -ForegroundColor Cyan
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host ""
 }
@@ -316,6 +328,173 @@ function Download-FileWithRetry {
 
     Write-Err "Dosya hicbir URL'den indirilemedi!"
     return $false
+}
+#endregion
+
+# ============================================================================
+#region VISUAL C++ RUNTIME KURULUMU
+# ============================================================================
+
+function Install-VCRuntimes {
+    Write-Step "Visual C++ Runtime kutuphaneleri kuruluyor..."
+
+    $VCRedistDir = $null
+
+    # Yerel dosyalar mevcut mu kontrol et
+    if ($Script:ScriptDir) {
+        $LocalVCDir = Join-Path $Script:ScriptDir "Visual-C-Runtimes-All-in-One-Dec-2025"
+        if (Test-Path $LocalVCDir) {
+            $VCRedistDir = $LocalVCDir
+            Write-Info "Yerel VC++ dosyalari bulundu: $VCRedistDir"
+        }
+    }
+
+    if (-not $VCRedistDir) {
+        # IEX modunda - Microsoft'tan indir
+        Write-Info "VC++ Runtime dosyalari Microsoft'tan indiriliyor..."
+        New-Item -Path $Script:TempBase -ItemType Directory -Force | Out-Null
+        $VCRedistDir = "$($Script:TempBase)\VCRedist"
+        New-Item -Path $VCRedistDir -ItemType Directory -Force | Out-Null
+
+        $VCDownloads = @(
+            @{ Name = "vcredist2005_x86.exe"; Url = "https://download.microsoft.com/download/8/B/4/8B42259F-5D70-43F4-AC2E-4B208FD8D66A/vcredist_x86.EXE" },
+            @{ Name = "vcredist2005_x64.exe"; Url = "https://download.microsoft.com/download/8/B/4/8B42259F-5D70-43F4-AC2E-4B208FD8D66A/vcredist_x64.EXE" },
+            @{ Name = "vcredist2008_x86.exe"; Url = "https://download.microsoft.com/download/5/D/8/5D8C65CB-C849-4025-8E95-C3966CAFD8AE/vcredist_x86.exe" },
+            @{ Name = "vcredist2008_x64.exe"; Url = "https://download.microsoft.com/download/5/D/8/5D8C65CB-C849-4025-8E95-C3966CAFD8AE/vcredist_x64.exe" },
+            @{ Name = "vcredist2010_x86.exe"; Url = "https://download.microsoft.com/download/1/6/5/165255E7-1014-4D0A-B094-B6A430A6BFFC/vcredist_x86.exe" },
+            @{ Name = "vcredist2010_x64.exe"; Url = "https://download.microsoft.com/download/1/6/5/165255E7-1014-4D0A-B094-B6A430A6BFFC/vcredist_x64.exe" },
+            @{ Name = "vcredist2012_x86.exe"; Url = "https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x86.exe" },
+            @{ Name = "vcredist2012_x64.exe"; Url = "https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x64.exe" },
+            @{ Name = "vcredist2013_x86.exe"; Url = "https://aka.ms/highdpimfc2013x86enu" },
+            @{ Name = "vcredist2013_x64.exe"; Url = "https://aka.ms/highdpimfc2013x64enu" },
+            @{ Name = "vcredist2015_2017_2019_2022_x86.exe"; Url = "https://aka.ms/vs/17/release/vc_redist.x86.exe" },
+            @{ Name = "vcredist2015_2017_2019_2022_x64.exe"; Url = "https://aka.ms/vs/17/release/vc_redist.x64.exe" }
+        )
+
+        foreach ($vc in $VCDownloads) {
+            $OutPath = Join-Path $VCRedistDir $vc.Name
+            try {
+                Write-Info "Indiriliyor: $($vc.Name)..."
+                $wc = New-Object System.Net.WebClient
+                $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                $wc.DownloadFile($vc.Url, $OutPath)
+                $wc.Dispose()
+            } catch {
+                Write-Warn "$($vc.Name) indirilemedi: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    # Kurulum
+    $Is64Bit = [Environment]::Is64BitOperatingSystem
+
+    $Installs = @(
+        @{ Name = "2005"; x86 = "vcredist2005_x86.exe"; x64 = "vcredist2005_x64.exe"; Args = "/q" },
+        @{ Name = "2008"; x86 = "vcredist2008_x86.exe"; x64 = "vcredist2008_x64.exe"; Args = "/qb" },
+        @{ Name = "2010"; x86 = "vcredist2010_x86.exe"; x64 = "vcredist2010_x64.exe"; Args = "/passive /norestart" },
+        @{ Name = "2012"; x86 = "vcredist2012_x86.exe"; x64 = "vcredist2012_x64.exe"; Args = "/passive /norestart" },
+        @{ Name = "2013"; x86 = "vcredist2013_x86.exe"; x64 = "vcredist2013_x64.exe"; Args = "/passive /norestart" },
+        @{ Name = "2015-2022"; x86 = "vcredist2015_2017_2019_2022_x86.exe"; x64 = "vcredist2015_2017_2019_2022_x64.exe"; Args = "/passive /norestart" }
+    )
+
+    $SuccessCount = 0
+    $TotalCount = 0
+
+    foreach ($inst in $Installs) {
+        Write-Info "Visual C++ $($inst.Name) kuruluyor..."
+
+        # x86
+        $x86Path = Join-Path $VCRedistDir $inst.x86
+        if (Test-Path $x86Path) {
+            $TotalCount++
+            $p = Start-Process -FilePath $x86Path -ArgumentList $inst.Args -Wait -PassThru
+            if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010 -or $p.ExitCode -eq 1638) {
+                Write-OK "VC++ $($inst.Name) x86 kuruldu"
+                $SuccessCount++
+            } else {
+                Write-Warn "VC++ $($inst.Name) x86 - Exit Code: $($p.ExitCode)"
+            }
+        }
+
+        # x64
+        if ($Is64Bit) {
+            $x64Path = Join-Path $VCRedistDir $inst.x64
+            if (Test-Path $x64Path) {
+                $TotalCount++
+                $p = Start-Process -FilePath $x64Path -ArgumentList $inst.Args -Wait -PassThru
+                if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010 -or $p.ExitCode -eq 1638) {
+                    Write-OK "VC++ $($inst.Name) x64 kuruldu"
+                    $SuccessCount++
+                } else {
+                    Write-Warn "VC++ $($inst.Name) x64 - Exit Code: $($p.ExitCode)"
+                }
+            }
+        }
+    }
+
+    Write-OK "Visual C++ Runtime kurulumu tamamlandi ($SuccessCount/$TotalCount basarili)"
+}
+#endregion
+
+# ============================================================================
+#region .NET FRAMEWORK ETKINLESTIRME
+# ============================================================================
+
+function Enable-DotNetFrameworks {
+    Write-Step ".NET Framework 3.5 ve 4.8.1 etkinlestiriliyor..."
+
+    # --- .NET Framework 3.5 ---
+    Write-Info ".NET Framework 3.5 kontrol ediliyor..."
+    try {
+        $NetFx3 = Get-WindowsOptionalFeature -Online -FeatureName "NetFx3" -ErrorAction SilentlyContinue
+        if ($NetFx3 -and $NetFx3.State -eq "Enabled") {
+            Write-OK ".NET Framework 3.5 zaten etkin"
+        } else {
+            Write-Info ".NET Framework 3.5 etkinlestiriliyor (Windows Update'ten indirilecek)..."
+            Enable-WindowsOptionalFeature -Online -FeatureName "NetFx3" -All -NoRestart -ErrorAction Stop | Out-Null
+            Write-OK ".NET Framework 3.5 etkinlestirildi"
+        }
+    } catch {
+        Write-Warn ".NET 3.5 etkinlestirilemedi: $($_.Exception.Message)"
+        Write-Info "Manuel: Denetim Masasi > Programlar > Windows ozelliklerini ac/kapat"
+    }
+
+    # --- .NET Framework 4.8.1 ---
+    Write-Info ".NET Framework 4.8.1 kontrol ediliyor..."
+    try {
+        $DotNet4 = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full\" -Name "Release" -ErrorAction SilentlyContinue
+        # .NET 4.8.1 Release numarasi: 533320 (Windows 11) veya 533325+
+        if ($DotNet4 -and $DotNet4.Release -ge 533320) {
+            Write-OK ".NET Framework 4.8.1 zaten kurulu (Release: $($DotNet4.Release))"
+        } else {
+            Write-Info ".NET Framework 4.8.1 indiriliyor ve kuruluyor..."
+            New-Item -Path $Script:TempBase -ItemType Directory -Force | Out-Null
+            $DotNet481Path = "$($Script:TempBase)\ndp481-setup.exe"
+
+            $wc = New-Object System.Net.WebClient
+            $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            $wc.DownloadFile($Script:DotNet481Url, $DotNet481Path)
+            $wc.Dispose()
+
+            if (Test-Path $DotNet481Path) {
+                $SizeMB = [math]::Round((Get-Item $DotNet481Path).Length / 1MB, 1)
+                Write-Info "Indirildi: $SizeMB MB - Kuruluyor..."
+                $p = Start-Process -FilePath $DotNet481Path -ArgumentList "/passive /norestart" -Wait -PassThru
+                switch ($p.ExitCode) {
+                    0       { Write-OK ".NET Framework 4.8.1 basariyla kuruldu" }
+                    3010    { Write-OK ".NET Framework 4.8.1 kuruldu (yeniden baslatma onerilir)" }
+                    1641    { Write-OK ".NET Framework 4.8.1 kuruldu (yeniden baslatma baslatildi)" }
+                    5100    { Write-Warn ".NET 4.8.1 bu isletim sistemi versiyonunu desteklemiyor" }
+                    default { Write-Warn ".NET 4.8.1 kurulum kodu: $($p.ExitCode)" }
+                }
+                Remove-Item $DotNet481Path -Force -ErrorAction SilentlyContinue
+            } else {
+                Write-Warn ".NET 4.8.1 indirilemedi"
+            }
+        }
+    } catch {
+        Write-Warn ".NET 4.8.1 kurulum hatasi: $($_.Exception.Message)"
+    }
 }
 #endregion
 
@@ -1080,6 +1259,10 @@ function Main {
         Write-Host "  +---------------------------------+" -ForegroundColor Cyan
         Write-Host "  | KURULUM OZETI                   |" -ForegroundColor Cyan
         Write-Host "  +---------------------------------+" -ForegroundColor Cyan
+        Write-Host "  | 1. Visual C++ Runtimes (Tumu)   |" -ForegroundColor Yellow
+        Write-Host "  | 2. .NET 3.5 + 4.8.1 Aktivasyon |" -ForegroundColor Yellow
+        Write-Host "  | 3. SQL Server $SelectedVersion Kurulumu   |" -ForegroundColor Yellow
+        Write-Host "  +---------------------------------+" -ForegroundColor Cyan
         Write-Host "  | Versiyon : SQL Server $SelectedVersion     |" -ForegroundColor White
         Write-Host "  | Instance : $($SelectedInstance.PadRight(21))|" -ForegroundColor White
         Write-Host "  | SA Sifre : $($Script:SAPassword.PadRight(21))|" -ForegroundColor White
@@ -1096,10 +1279,17 @@ function Main {
             return
         }
 
-        # 6. SQL Server medyasini indir ve setup path'ini al
+        # 6. Visual C++ Runtime kutuphanelerini kur
+        Install-VCRuntimes
+
+        # 7. .NET Framework 3.5 ve 4.8.1 etkinlestir
+        Enable-DotNetFrameworks
+
+        # 8. SQL Server medyasini indir ve setup path'ini al
+        Write-Step "SQL Server kurulumuna geciliyor..."
         $SetupExe = Get-SqlSetupPath -Version $SelectedVersion
 
-        # 7. SQL Server'i kur
+        # 9. SQL Server'i kur
         $InstallSuccess = Install-SqlServerEngine -Version $SelectedVersion -InstanceName $SelectedInstance -SetupExePath $SetupExe
 
         if (-not $InstallSuccess) {
@@ -1107,35 +1297,35 @@ function Main {
             return
         }
 
-        # 8. Servisin hazir olmasini bekle
+        # 10. Servisin hazir olmasini bekle
         $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
 
-        # 9. Protokolleri yapilandir (registry)
+        # 11. Protokolleri yapilandir (registry)
         Set-SqlProtocols -InstanceName $SelectedInstance
 
-        # 10. SQL Browser servisini baslat
+        # 12. SQL Browser servisini baslat
         Set-SqlBrowserService
 
-        # 11. Servisi yeniden baslat (protokol degisiklikleri icin)
+        # 13. Servisi yeniden baslat (protokol degisiklikleri icin)
         Restart-SqlService -InstanceName $SelectedInstance
 
-        # 12. Servisin tekrar hazir olmasini bekle
+        # 14. Servisin tekrar hazir olmasini bekle
         $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
 
         if ($Ready) {
-            # 13. Performans optimizasyonu
+            # 15. Performans optimizasyonu
             Set-SqlPerformanceConfig -InstanceName $SelectedInstance -Version $SelectedVersion
         }
 
-        # 14. SQL Native Client
+        # 16. SQL Native Client
         Install-NativeClient
 
-        # 15. Baglanti testi
+        # 17. Baglanti testi
         if ($Ready) {
             Test-FinalConnection -InstanceName $SelectedInstance
         }
 
-        # 16. Ozet
+        # 18. Ozet
         Show-Summary -Version $SelectedVersion -InstanceName $SelectedInstance
 
         # Temizlik

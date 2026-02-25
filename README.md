@@ -1,19 +1,33 @@
-# Bayt Support SQL Server IEX Installer
+# Bayt Support IEX Installer
 
-Bu proje PowerShell IEX (Invoke-Expression) kullanarak SQL Server Express'i **tek komutla** otomatik olarak kurmak ve yapılandırmak için tasarlanmıştır.
+Bu proje PowerShell IEX (Invoke-Expression) kullanarak **tek komutla** aşağıdaki işlemleri otomatik olarak gerçekleştirir:
+
+1. **Visual C++ Runtime** kütüphanelerinin tamamını kurar (2005 - 2022)
+2. **.NET Framework 3.5** ve **4.8.1** etkinleştirir/kurar
+3. **SQL Server Express** kurar ve yapılandırır
 
 ## Hızlı Başlangıç (Tek Komut)
 
 PowerShell'i **Yönetici olarak** açın ve şunu yapıştırın:
 
 ```powershell
-iex (irm 'https://raw.githubusercontent.com/bayt-support/sql-server-iex/main/install-online.ps1')
+iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 ```
 
 > **Not:** Yönetici olarak açmadıysanız script otomatik olarak yetki yükseltme yapacaktır.
 
 ## Özellikler
 
+### Visual C++ Runtime Kurulumu
+- Visual C++ 2005, 2008, 2010, 2012, 2013, 2015-2022 (x86 + x64)
+- Yerel dosyalar mevcutsa onları kullanır, yoksa Microsoft'tan otomatik indirir
+- Sessiz kurulum (kullanıcı müdahalesi gerektirmez)
+
+### .NET Framework Etkinleştirme
+- .NET Framework 3.5 (Windows özelliği olarak etkinleştirir)
+- .NET Framework 4.8.1 (kurulu değilse Microsoft'tan indirip kurar)
+
+### SQL Server Express Kurulumu
 - SQL Server 2014, 2017, 2019, 2022, 2025 versiyonlarını destekler
 - **Web'den tek komutla çalışır** (tüm bağımlılıklar tek dosyada)
 - Otomatik sa kullanıcısı oluşturma (şifre: Bay_T252!)
@@ -36,12 +50,12 @@ iex (irm 'https://raw.githubusercontent.com/bayt-support/sql-server-iex/main/ins
 ### Yöntem 1: Web'den Tek Komut (TAVSİYE EDİLEN)
 ```powershell
 # PowerShell'i Yönetici olarak açın ve yapıştırın:
-iex (irm 'https://raw.githubusercontent.com/bayt-support/sql-server-iex/main/install-online.ps1')
+iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 ```
 
 ### Yöntem 2: Alternatif Sözdizimi
 ```powershell
-iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/bayt-support/sql-server-iex/main/install-online.ps1')
+iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 ```
 
 ### Yöntem 3: Yerel Kullanım
@@ -50,23 +64,38 @@ iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercont
 .\install-online.ps1
 ```
 
-### Yöntem 4: Parametreli Kullanım (Eski Modüler Yapı)
-```powershell
-.\install.ps1 -SqlVersion 2019 -InstanceName BaytTicariSQL
-```
-
 ## Dosya Yapısı
 
-| Dosya | Açıklama |
-|-------|----------|
+| Dosya / Klasör | Açıklama |
+|----------------|----------|
 | `install-online.ps1` | **Ana script - Web'den tek komutla çalışan all-in-one installer** |
-| `install.ps1` | Eski modüler installer (yerel kullanım, modules/ gerektirir) |
-| `quick-install.ps1` | Bootstrap script (install-online.ps1'i indirir ve çalıştırır) |
-| `uninstall.ps1` | SQL Server kaldırma scripti |
-| `config/` | Yapılandırma şablonları |
-| `modules/` | Eski modüler yapı (yerel kullanım için) |
+| `Visual-C-Runtimes-All-in-One-Dec-2025/` | Visual C++ Runtime kurulum dosyaları (2005-2022, x86+x64) |
 
-## Versiyon Farkları
+## Kurulum Akışı
+
+```
+┌─────────────────────────────────────────┐
+│  1. Sistem gereksinimleri kontrolü      │
+│  2. SQL versiyon ve instance seçimi     │
+│  3. Kullanıcı onayı                    │
+├─────────────────────────────────────────┤
+│  4. Visual C++ Runtimes kurulumu        │
+│     (2005, 2008, 2010, 2012, 2013,     │
+│      2015-2022 x86+x64)               │
+├─────────────────────────────────────────┤
+│  5. .NET Framework 3.5 etkinleştirme   │
+│  6. .NET Framework 4.8.1 kurulumu      │
+├─────────────────────────────────────────┤
+│  7. SQL Server medyası indirme         │
+│  8. SQL Server kurulumu                │
+│  9. Protokol yapılandırması            │
+│ 10. Performans optimizasyonu           │
+│ 11. SQL Native Client kurulumu         │
+│ 12. Bağlantı testi ve özet            │
+└─────────────────────────────────────────┘
+```
+
+## SQL Server Versiyon Farkları
 
 | Özellik | 2014 | 2017 | 2019 | 2022 | 2025 |
 |---------|------|------|------|------|------|
@@ -79,24 +108,20 @@ iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercont
 
 ## Teknik Detaylar
 
-### Kurulum Akışı
-1. Yönetici hakları kontrolü (otomatik yükseltme)
-2. Sistem gereksinimleri kontrolü (64-bit, PS 5.1+, disk, RAM)
-3. Etkileşimli menü ile versiyon ve instance seçimi
-4. SQL Server medyası indirme (SSEI veya doğrudan)
-5. Dosyaları çıkarma ve setup.exe çalıştırma (/QS unattended modu)
-6. Protokol yapılandırması (TCP/IP, Named Pipes, Shared Memory - Registry)
-7. SQL Browser servisi başlatma
-8. Performans optimizasyonu (sp_configure, TempDB)
-9. SQL Native Client 2012 kurulumu (gerekirse)
-10. Bağlantı testi ve özet
-
 ### Neden All-in-One?
-Eski yapıda `install.ps1` ayrı modül dosyalarına (`modules/*.psm1`) bağımlıydı. IEX ile web'den çalıştırıldığında `$PSScriptRoot` boş olduğundan modüller bulunamaz ve script çalışmazdı. `install-online.ps1` tüm fonksiyonları tek dosyada içerir.
+IEX ile web'den çalıştırıldığında `$PSScriptRoot` boş olduğundan modüller bulunamaz. `install-online.ps1` tüm fonksiyonları tek dosyada içerir ve ek bağımlılık gerektirmez.
+
+### VC++ Runtime Yönetimi
+- **Yerel çalışma:** `Visual-C-Runtimes-All-in-One-Dec-2025/` klasöründeki dosyalar kullanılır
+- **IEX (web) çalışma:** Microsoft resmi sunucularından otomatik indirilir
 
 ### SSEI vs Doğrudan İndirme
 - **Doğrudan**: Tam installer `.exe` indirilir → `/x:` ile extract → `setup.exe` çalıştırılır
 - **SSEI**: Microsoft'un küçük bootstrap aracı indirilir → `/ACTION=Download` ile medya indirilir → extract → `setup.exe` çalıştırılır
+
+## Lisans
+
+Bu proje serbestçe kullanılabilir.
 
 ## Gereksinimler
 
