@@ -109,7 +109,7 @@ $Script:SqlDownloadInfo = @{
     "2025" = @{
         Type     = "SSEI"
         Urls     = @(
-            "https://go.microsoft.com/fwlink/?linkid=2264125"
+            "https://go.microsoft.com/fwlink/?linkid=2216019"
         )
         Features             = "SQLENGINE"
         SupportsInstantInit  = $true
