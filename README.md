@@ -1,127 +1,155 @@
 # Bayt Support IEX Installer
 
-Bu proje PowerShell IEX (Invoke-Expression) kullanarak **tek komutla** aşağıdaki işlemleri otomatik olarak gerçekleştirir:
+Windows sistemler icin **tek komutla** calisan, **GUI arayuzlu** otomatik kurulum araci.
 
-1. **Visual C++ Runtime** kütüphanelerinin tamamını kurar (2005 - 2022)
-2. **.NET Framework 3.5** ve **4.8.1** etkinleştirir/kurar
-3. **SQL Server Express** kurar ve yapılandırır
+Hangi bilesenleri kurmak istediginizi gorsel arayuzden secin:
 
-## Hızlı Başlangıç (Tek Komut)
+- **Visual C++ Runtime** kutuphaneleri (2005 - 2022)
+- **.NET Framework 3.5** ve **4.8.1**
+- **SQL Server Express** *(opsiyonel)*
 
-PowerShell'i **Yönetici olarak** açın ve şunu yapıştırın:
+> SQL Server kurulumu **zorunlu degildir**. Sadece C++ ve .NET kurulumu icin de kullanabilirsiniz.
+
+![GUI](https://img.shields.io/badge/Aray%C3%BCz-Windows%20Forms%20GUI-blue?style=for-the-badge)
+
+## Hizli Baslangic (Tek Komut)
+
+PowerShell'i **Yonetici olarak** acin ve sunu yapistin:
 
 ```powershell
 iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 ```
 
-> **Not:** Yönetici olarak açmadıysanız script otomatik olarak yetki yükseltme yapacaktır.
+> **Not:** Yonetici olarak acmadiyisaniz script otomatik olarak yetki yukseltme yapacaktir.
 
-## Özellikler
+## Nasil Calisir?
+
+1. Komut calistirilir
+2. **GUI penceresi** acilir — kurmak istediginiz bilesenleri isaretleyin
+3. **Kurulumu Baslat** butonuna tiklayin
+4. Sectiginiz bilesenler sirayla kurulur, ilerleme konsolda gosterilir
+
+```
+┌──────────────────────────────────────────────────┐
+│  Bayt Support Otomatik Kurulum v3.0              │
+│  Kurmak istediginiz bilesenleri secin             │
+│                                                   │
+│  KURULACAK BILESENLER                             │
+│  [x] Visual C++ Runtimes (2005-2022, x86+x64)   │
+│  [x] .NET Framework 3.5                          │
+│  [x] .NET Framework 4.8.1                        │
+│  [ ] SQL Server Express Kurulumu                  │
+│                                                   │
+│  SQL SERVER AYARLARI (SQL secildiginde aktif)     │
+│  Versiyon: [SQL Server 2019 (Onerilen)]          │
+│  Instance: [BaytTicariSQL            ]            │
+│  SA Sifre: [Bay_T252!               ]            │
+│                                                   │
+│  [  Kurulumu Baslat  ]  [  Iptal  ]              │
+└──────────────────────────────────────────────────┘
+```
+
+## Ozellikler
 
 ### Visual C++ Runtime Kurulumu
 - Visual C++ 2005, 2008, 2010, 2012, 2013, 2015-2022 (x86 + x64)
-- Yerel dosyalar mevcutsa onları kullanır, yoksa Microsoft'tan otomatik indirir
-- Sessiz kurulum (kullanıcı müdahalesi gerektirmez)
+- Yerel dosyalar mevcutsa onlari kullanir, yoksa Microsoft'tan otomatik indirir
+- Sessiz kurulum (kullanici mudahalesi gerektirmez)
 
-### .NET Framework Etkinleştirme
-- .NET Framework 3.5 (Windows özelliği olarak etkinleştirir)
-- .NET Framework 4.8.1 (kurulu değilse Microsoft'tan indirip kurar)
+### .NET Framework Etkinlestirme
+- .NET Framework 3.5 (Windows ozelligi olarak etkinlestirir)
+- .NET Framework 4.8.1 (kurulu degilse Microsoft'tan indirip kurar)
+- Her biri ayri ayri secilip devre disi birakilabilir
 
-### SQL Server Express Kurulumu
-- SQL Server 2014, 2017, 2019, 2022, 2025 versiyonlarını destekler
-- **Web'den tek komutla çalışır** (tüm bağımlılıklar tek dosyada)
-- Otomatik sa kullanıcısı oluşturma (şifre: Bay_T252!)
-- Hazır instance isimleri (BaytTicariSQL, BaytBossSQL, Bayt) veya manuel girme
+### SQL Server Express Kurulumu (Opsiyonel)
+- SQL Server 2014, 2017, 2019, 2022, 2025 versiyonlarini destekler
+- **Kurmak zorunda degilsiniz** — GUI'den isaretlemezseniz atlanir
+- Otomatik sa kullanicisi olusturma
+- Hazir instance isimleri (BaytTicariSQL, BaytBossSQL, Bayt) veya serbest yazi ile ozel isim
 - SQL Native Client 2012 kurulumu (otomatik kontrol)
-- Shared Memory, TCP/IP ve Named Pipes protokolü etkinleştirme
-- SQL Server Browser servisi etkinleştirme
-- **Tamamen otomatik kurulum** (kullanıcı müdahalesi gerektirmez - /QS modu)
+- Shared Memory, TCP/IP ve Named Pipes protokolu etkinlestirme
+- SQL Server Browser servisi etkinlestirme
 - **Performans Optimizasyonu:**
   - Otomatik RAM ve CPU optimizasyonu (Express limitleri dahilinde)
-  - TempDB çoklu dosya yapılandırması (2017+ kurulum sırasında, 2014 kurulum sonrası)
-  - Max Degree of Parallelism ayarlama
-  - Cost Threshold for Parallelism optimizasyonu
-  - Backup sıkıştırma etkinleştirme (2017+)
-  - Ad-hoc sorgu optimizasyonu
-  - Anında dosya başlatma (Instant File Initialization, 2017+)
+  - TempDB coklu dosya yapilandirmasi
+  - Max Degree of Parallelism, Cost Threshold, Backup Compression
+  - Aninda dosya baslatma (Instant File Initialization, 2017+)
 
-## Kullanım
+## Kullanim
 
-### Yöntem 1: Web'den Tek Komut (TAVSİYE EDİLEN)
+### Yontem 1: Web'den Tek Komut (TAVSIYE EDILEN)
 ```powershell
-# PowerShell'i Yönetici olarak açın ve yapıştırın:
+# PowerShell'i Yonetici olarak acin ve yapistin:
 iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 ```
 
-### Yöntem 2: Alternatif Sözdizimi
+### Yontem 2: Alternatif Sozdizimi
 ```powershell
 iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 ```
 
-### Yöntem 3: Yerel Kullanım
+### Yontem 3: Yerel Kullanim
 ```powershell
-# Projeyi indirin ve çalıştırın
+# Projeyi indirin ve calistirin
 .\install-online.ps1
 ```
 
-## Dosya Yapısı
+## Dosya Yapisi
 
-| Dosya / Klasör | Açıklama |
+| Dosya / Klasor | Aciklama |
 |----------------|----------|
-| `install-online.ps1` | **Ana script - Web'den tek komutla çalışan all-in-one installer** |
-| `Visual-C-Runtimes-All-in-One-Dec-2025/` | Visual C++ Runtime kurulum dosyaları (2005-2022, x86+x64) |
+| `install-online.ps1` | **Ana script — GUI arayuzlu all-in-one installer** |
+| `Visual-C-Runtimes-All-in-One-Dec-2025/` | Visual C++ Runtime kurulum dosyalari (2005-2022, x86+x64) |
 
-## Kurulum Akışı
+## Kurulum Akisi
 
 ```
 ┌─────────────────────────────────────────┐
-│  1. Sistem gereksinimleri kontrolü      │
-│  2. SQL versiyon ve instance seçimi     │
-│  3. Kullanıcı onayı                    │
+│  1. GUI acilir, bilesen secimi          │
+│  2. Sistem gereksinimleri kontrolu      │
 ├─────────────────────────────────────────┤
-│  4. Visual C++ Runtimes kurulumu        │
-│     (2005, 2008, 2010, 2012, 2013,     │
-│      2015-2022 x86+x64)               │
+│  3. Visual C++ Runtimes kurulumu        │
+│     (secildiyse)                        │
 ├─────────────────────────────────────────┤
-│  5. .NET Framework 3.5 etkinleştirme   │
-│  6. .NET Framework 4.8.1 kurulumu      │
+│  4. .NET Framework 3.5 etkinlestirme   │
+│  5. .NET Framework 4.8.1 kurulumu      │
+│     (secildiyse)                        │
 ├─────────────────────────────────────────┤
-│  7. SQL Server medyası indirme         │
-│  8. SQL Server kurulumu                │
-│  9. Protokol yapılandırması            │
-│ 10. Performans optimizasyonu           │
-│ 11. SQL Native Client kurulumu         │
-│ 12. Bağlantı testi ve özet            │
+│  6. SQL Server indirme ve kurulumu      │
+│  7. Protokol yapilandirmasi             │
+│  8. Performans optimizasyonu            │
+│  9. Baglanti testi ve ozet             │
+│     (SQL secildiyse)                    │
 └─────────────────────────────────────────┘
 ```
 
-## SQL Server Versiyon Farkları
+## SQL Server Versiyon Farklari
 
-| Özellik | 2014 | 2017 | 2019 | 2022 | 2025 |
+| Ozellik | 2014 | 2017 | 2019 | 2022 | 2025 |
 |---------|------|------|------|------|------|
-| İndirme Yöntemi | Doğrudan | SSEI | Doğrudan | SSEI | SSEI |
+| Indirme Yontemi | Dogrudan | SSEI | Dogrudan | SSEI | SSEI |
 | Max RAM (Express) | 1 GB | 1.4 GB | 1.4 GB | 1.4 GB | 1.4 GB |
 | Max CPU (Express) | 1 core | 4 core | 4 core | 4 core | 4 core |
-| TempDB Setup Param | Hayır | Evet | Evet | Evet | Evet |
-| Instant File Init | Hayır | Evet | Evet | Evet | Evet |
-| Backup Compression | Hayır | Evet | Evet | Evet | Evet |
+| TempDB Setup Param | Hayir | Evet | Evet | Evet | Evet |
+| Instant File Init | Hayir | Evet | Evet | Evet | Evet |
+| Backup Compression | Hayir | Evet | Evet | Evet | Evet |
 
 ## Teknik Detaylar
 
 ### Neden All-in-One?
-IEX ile web'den çalıştırıldığında `$PSScriptRoot` boş olduğundan modüller bulunamaz. `install-online.ps1` tüm fonksiyonları tek dosyada içerir ve ek bağımlılık gerektirmez.
+IEX ile web'den calistirildiginda `$PSScriptRoot` bos oldugundan moduller bulunamaz. `install-online.ps1` tum fonksiyonlari tek dosyada icerir ve ek bagimlilik gerektirmez.
 
-### VC++ Runtime Yönetimi
-- **Yerel çalışma:** `Visual-C-Runtimes-All-in-One-Dec-2025/` klasöründeki dosyalar kullanılır
-- **IEX (web) çalışma:** Microsoft resmi sunucularından otomatik indirilir
+### VC++ Runtime Yonetimi
+- **Yerel calisma:** `Visual-C-Runtimes-All-in-One-Dec-2025/` klasorundeki dosyalar kullanilir
+- **IEX (web) calisma:** Microsoft resmi sunucularindan otomatik indirilir
 
-### SSEI vs Doğrudan İndirme
-- **Doğrudan**: Tam installer `.exe` indirilir → `/x:` ile extract → `setup.exe` çalıştırılır
-- **SSEI**: Microsoft'un küçük bootstrap aracı indirilir → `/ACTION=Download` ile medya indirilir → extract → `setup.exe` çalıştırılır
+### SSEI vs Dogrudan Indirme
+- **Dogrudan**: Tam installer `.exe` indirilir → `/x:` ile extract → `setup.exe` calistirilir
+- **SSEI**: Microsoft'un kucuk bootstrap araci indirilir → `/ACTION=Download` ile medya indirilir → extract → `setup.exe` calistirilir
 
 ## Lisans
 
-Bu proje serbestçe kullanılabilir.
+Bu proje serbestce kullanilabilir.
 
 ## Gereksinimler
 

@@ -1,6 +1,6 @@
 # ============================================================================
-# Bayt Support SQL Server Otomatik Kurulum Scripti (All-in-One / Web Ready)
-# Versiyon: 2.0
+# Bayt Support Otomatik Kurulum Scripti (GUI / All-in-One / Web Ready)
+# Versiyon: 3.0
 # Tarih: 2026
 # ============================================================================
 # Kullanim (tek komut):
@@ -19,7 +19,7 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 #region YAPILANDIRMA
 # ============================================================================
 $Script:SAPassword       = "Bay_T252!"
-$Script:ScriptVersion    = "2.0"
+$Script:ScriptVersion    = "3.0"
 $Script:TempBase         = "$env:TEMP\BaytSqlInstall"
 $Script:ScriptUrl        = "https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1"
 
@@ -441,8 +441,14 @@ function Install-VCRuntimes {
 # ============================================================================
 
 function Enable-DotNetFrameworks {
-    Write-Step ".NET Framework 3.5 ve 4.8.1 etkinlestiriliyor..."
+    param(
+        [bool]$InstallNet35 = $true,
+        [bool]$InstallNet481 = $true
+    )
 
+    Write-Step ".NET Framework etkinlestiriliyor..."
+
+    if ($InstallNet35) {
     # --- .NET Framework 3.5 ---
     Write-Info ".NET Framework 3.5 kontrol ediliyor..."
     try {
@@ -458,7 +464,9 @@ function Enable-DotNetFrameworks {
         Write-Warn ".NET 3.5 etkinlestirilemedi: $($_.Exception.Message)"
         Write-Info "Manuel: Denetim Masasi > Programlar > Windows ozelliklerini ac/kapat"
     }
+    } # end InstallNet35
 
+    if ($InstallNet481) {
     # --- .NET Framework 4.8.1 ---
     Write-Info ".NET Framework 4.8.1 kontrol ediliyor..."
     try {
@@ -495,71 +503,241 @@ function Enable-DotNetFrameworks {
     } catch {
         Write-Warn ".NET 4.8.1 kurulum hatasi: $($_.Exception.Message)"
     }
+    } # end InstallNet481
 }
 #endregion
 
 # ============================================================================
-#region MENU FONKSIYONLARI
+#region GUI FORM
 # ============================================================================
 
-function Get-SqlVersionMenu {
-    Write-Host ""
-    Write-Host "=== SQL Server Versiyon Secimi ===" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  1. SQL Server 2019  (Stabil, Onerilen)" -ForegroundColor White
-    Write-Host "  2. SQL Server 2022  (En Guncel Stabil)" -ForegroundColor White
-    Write-Host "  3. SQL Server 2017" -ForegroundColor White
-    Write-Host "  4. SQL Server 2014" -ForegroundColor White
-    Write-Host "  5. SQL Server 2025  (En Yeni)" -ForegroundColor White
-    Write-Host ""
+function Show-InstallGUI {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    [System.Windows.Forms.Application]::EnableVisualStyles()
 
-    do {
-        $Choice = Read-Host "  Seciminiz (1-5) [Varsayilan: 1]"
-        if ([string]::IsNullOrWhiteSpace($Choice)) { $Choice = "1" }
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Bayt Support Otomatik Kurulum v$($Script:ScriptVersion)"
+    $form.Size = New-Object System.Drawing.Size(540, 540)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
 
-        switch ($Choice) {
-            "1" { return "2019" }
-            "2" { return "2022" }
-            "3" { return "2017" }
-            "4" { return "2014" }
-            "5" { return "2025" }
-            default { Write-Warn "Gecersiz! Lutfen 1-5 arasi sayi girin." }
+    $y = 15
+
+    # --- Baslik ---
+    $lblTitle = New-Object System.Windows.Forms.Label
+    $lblTitle.Text = "Bayt Support Otomatik Kurulum"
+    $lblTitle.Font = New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)
+    $lblTitle.ForeColor = [System.Drawing.Color]::FromArgb(0, 100, 200)
+    $lblTitle.Location = New-Object System.Drawing.Point(20, $y)
+    $lblTitle.AutoSize = $true
+    $form.Controls.Add($lblTitle)
+    $y += 38
+
+    $lblSub = New-Object System.Windows.Forms.Label
+    $lblSub.Text = "Kurmak istediginiz bilesenleri secin ve Kurulumu Baslat'a tiklayin."
+    $lblSub.ForeColor = [System.Drawing.Color]::Gray
+    $lblSub.Location = New-Object System.Drawing.Point(22, $y)
+    $lblSub.AutoSize = $true
+    $form.Controls.Add($lblSub)
+    $y += 30
+
+    # --- Bilesenler GroupBox ---
+    $grpComp = New-Object System.Windows.Forms.GroupBox
+    $grpComp.Text = "Kurulacak Bilesenler"
+    $grpComp.Location = New-Object System.Drawing.Point(15, $y)
+    $grpComp.Size = New-Object System.Drawing.Size(495, 160)
+    $grpComp.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
+    $form.Controls.Add($grpComp)
+
+    $normalFont = New-Object System.Drawing.Font("Segoe UI", 9.5)
+
+    $chkVCPP = New-Object System.Windows.Forms.CheckBox
+    $chkVCPP.Text = "Visual C++ Runtimes (2005 - 2022, x86 + x64)"
+    $chkVCPP.Checked = $true
+    $chkVCPP.Location = New-Object System.Drawing.Point(15, 28)
+    $chkVCPP.AutoSize = $true
+    $chkVCPP.Font = $normalFont
+    $grpComp.Controls.Add($chkVCPP)
+
+    $chkNet35 = New-Object System.Windows.Forms.CheckBox
+    $chkNet35.Text = ".NET Framework 3.5"
+    $chkNet35.Checked = $true
+    $chkNet35.Location = New-Object System.Drawing.Point(15, 58)
+    $chkNet35.AutoSize = $true
+    $chkNet35.Font = $normalFont
+    $grpComp.Controls.Add($chkNet35)
+
+    $chkNet481 = New-Object System.Windows.Forms.CheckBox
+    $chkNet481.Text = ".NET Framework 4.8.1"
+    $chkNet481.Checked = $true
+    $chkNet481.Location = New-Object System.Drawing.Point(15, 88)
+    $chkNet481.AutoSize = $true
+    $chkNet481.Font = $normalFont
+    $grpComp.Controls.Add($chkNet481)
+
+    $chkSQL = New-Object System.Windows.Forms.CheckBox
+    $chkSQL.Text = "SQL Server Express Kurulumu"
+    $chkSQL.Checked = $false
+    $chkSQL.Location = New-Object System.Drawing.Point(15, 122)
+    $chkSQL.AutoSize = $true
+    $chkSQL.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
+    $chkSQL.ForeColor = [System.Drawing.Color]::FromArgb(0, 100, 200)
+    $grpComp.Controls.Add($chkSQL)
+
+    $y += 170
+
+    # --- SQL Ayarlari GroupBox ---
+    $grpSql = New-Object System.Windows.Forms.GroupBox
+    $grpSql.Text = "SQL Server Ayarlari (SQL secildiginde aktif olur)"
+    $grpSql.Location = New-Object System.Drawing.Point(15, $y)
+    $grpSql.Size = New-Object System.Drawing.Size(495, 145)
+    $grpSql.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
+    $grpSql.Enabled = $false
+    $form.Controls.Add($grpSql)
+
+    $lblVer = New-Object System.Windows.Forms.Label
+    $lblVer.Text = "Versiyon:"
+    $lblVer.Location = New-Object System.Drawing.Point(15, 32)
+    $lblVer.AutoSize = $true
+    $lblVer.Font = $normalFont
+    $grpSql.Controls.Add($lblVer)
+
+    $cmbVersion = New-Object System.Windows.Forms.ComboBox
+    $cmbVersion.Items.AddRange(@("SQL Server 2019 (Onerilen)", "SQL Server 2022", "SQL Server 2017", "SQL Server 2014", "SQL Server 2025"))
+    $cmbVersion.SelectedIndex = 0
+    $cmbVersion.Location = New-Object System.Drawing.Point(115, 29)
+    $cmbVersion.Size = New-Object System.Drawing.Size(290, 25)
+    $cmbVersion.DropDownStyle = "DropDownList"
+    $cmbVersion.Font = $normalFont
+    $grpSql.Controls.Add($cmbVersion)
+
+    $lblInst = New-Object System.Windows.Forms.Label
+    $lblInst.Text = "Instance:"
+    $lblInst.Location = New-Object System.Drawing.Point(15, 68)
+    $lblInst.AutoSize = $true
+    $lblInst.Font = $normalFont
+    $grpSql.Controls.Add($lblInst)
+
+    $cmbInstance = New-Object System.Windows.Forms.ComboBox
+    $cmbInstance.Items.AddRange(@("BaytTicariSQL", "BaytBossSQL", "Bayt", "SQLEXPRESS"))
+    $cmbInstance.SelectedIndex = 0
+    $cmbInstance.Location = New-Object System.Drawing.Point(115, 65)
+    $cmbInstance.Size = New-Object System.Drawing.Size(290, 25)
+    $cmbInstance.DropDownStyle = "DropDown"  # Serbest yazi da girilebilir
+    $cmbInstance.Font = $normalFont
+    $grpSql.Controls.Add($cmbInstance)
+
+    $lblPass = New-Object System.Windows.Forms.Label
+    $lblPass.Text = "SA Sifre:"
+    $lblPass.Location = New-Object System.Drawing.Point(15, 104)
+    $lblPass.AutoSize = $true
+    $lblPass.Font = $normalFont
+    $grpSql.Controls.Add($lblPass)
+
+    $txtPassword = New-Object System.Windows.Forms.TextBox
+    $txtPassword.Text = $Script:SAPassword
+    $txtPassword.Location = New-Object System.Drawing.Point(115, 101)
+    $txtPassword.Size = New-Object System.Drawing.Size(290, 25)
+    $txtPassword.Font = $normalFont
+    $grpSql.Controls.Add($txtPassword)
+
+    # SQL checkbox toggle
+    $chkSQL.Add_CheckedChanged({
+        $grpSql.Enabled = $chkSQL.Checked
+    })
+
+    $y += 155
+
+    # --- Sistem Bilgisi ---
+    $lblInfo = New-Object System.Windows.Forms.Label
+    $lblInfo.Location = New-Object System.Drawing.Point(20, $y)
+    $lblInfo.Size = New-Object System.Drawing.Size(490, 18)
+    $lblInfo.ForeColor = [System.Drawing.Color]::Gray
+    $lblInfo.Font = New-Object System.Drawing.Font("Segoe UI", 8)
+    $form.Controls.Add($lblInfo)
+    try {
+        $cpuName = (Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).Name
+        $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory / 1GB, 1)
+        $diskGB = [math]::Round((Get-CimInstance Win32_LogicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.DeviceID -eq $env:SystemDrive }).FreeSpace / 1GB, 1)
+        $lblInfo.Text = "$cpuName | RAM: ${ramGB} GB | Bos Disk: ${diskGB} GB"
+    } catch { $lblInfo.Text = "" }
+
+    $y += 25
+
+    # --- Butonlar ---
+    $btnInstall = New-Object System.Windows.Forms.Button
+    $btnInstall.Text = "Kurulumu Baslat"
+    $btnInstall.Location = New-Object System.Drawing.Point(130, $y)
+    $btnInstall.Size = New-Object System.Drawing.Size(170, 42)
+    $btnInstall.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
+    $btnInstall.ForeColor = [System.Drawing.Color]::White
+    $btnInstall.FlatStyle = "Flat"
+    $btnInstall.Font = New-Object System.Drawing.Font("Segoe UI", 10.5, [System.Drawing.FontStyle]::Bold)
+    $btnInstall.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $form.Controls.Add($btnInstall)
+
+    $btnCancel = New-Object System.Windows.Forms.Button
+    $btnCancel.Text = "Iptal"
+    $btnCancel.Location = New-Object System.Drawing.Point(315, $y)
+    $btnCancel.Size = New-Object System.Drawing.Size(100, 42)
+    $btnCancel.FlatStyle = "Flat"
+    $btnCancel.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+    $btnCancel.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $form.Controls.Add($btnCancel)
+
+    $form.AcceptButton = $btnInstall
+    $form.CancelButton = $btnCancel
+
+    # --- Buton Olaylari ---
+    $Script:GUIResult = $null
+
+    $btnInstall.Add_Click({
+        if (-not $chkVCPP.Checked -and -not $chkNet35.Checked -and -not $chkNet481.Checked -and -not $chkSQL.Checked) {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Lutfen en az bir bilesen secin!",
+                "Uyari",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+            return
         }
-    } while ($true)
-}
 
-function Get-InstanceNameMenu {
-    Write-Host ""
-    Write-Host "=== SQL Server Instance Secimi ===" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  1. BaytTicariSQL  (Bayt Ticari)" -ForegroundColor White
-    Write-Host "  2. BaytBossSQL    (Bayt Boss)" -ForegroundColor White
-    Write-Host "  3. Bayt           (Genel Bayt)" -ForegroundColor White
-    Write-Host "  4. SQLEXPRESS     (Varsayilan Express)" -ForegroundColor White
-    Write-Host "  5. Manuel gir     (Ozel isim)" -ForegroundColor White
-    Write-Host ""
-
-    do {
-        $Choice = Read-Host "  Seciminiz (1-5) [Varsayilan: 1]"
-        if ([string]::IsNullOrWhiteSpace($Choice)) { $Choice = "1" }
-
-        switch ($Choice) {
-            "1" { return "BaytTicariSQL" }
-            "2" { return "BaytBossSQL" }
-            "3" { return "Bayt" }
-            "4" { return "SQLEXPRESS" }
-            "5" {
-                do {
-                    $Custom = Read-Host "  Instance adi girin (sadece harf, rakam, alt cizgi)"
-                    if ($Custom -match '^[a-zA-Z][a-zA-Z0-9_]{0,15}$') {
-                        return $Custom.ToUpper()
-                    }
-                    Write-Warn "Gecersiz isim! Harf ile baslamali, max 16 karakter, ozel karakter yok."
-                } while ($true)
-            }
-            default { Write-Warn "Gecersiz! Lutfen 1-5 arasi sayi girin." }
+        if ($chkSQL.Checked -and [string]::IsNullOrWhiteSpace($cmbInstance.Text)) {
+            [System.Windows.Forms.MessageBox]::Show(
+                "SQL Server secildi fakat Instance ismi bos!",
+                "Uyari",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+            return
         }
-    } while ($true)
+
+        $versionMap = @{ 0 = "2019"; 1 = "2022"; 2 = "2017"; 3 = "2014"; 4 = "2025" }
+
+        $Script:GUIResult = @{
+            InstallVCPP    = $chkVCPP.Checked
+            InstallNet35   = $chkNet35.Checked
+            InstallNet481  = $chkNet481.Checked
+            InstallSQL     = $chkSQL.Checked
+            SqlVersion     = $versionMap[$cmbVersion.SelectedIndex]
+            InstanceName   = $cmbInstance.Text.Trim().ToUpper()
+            SAPassword     = $txtPassword.Text
+        }
+
+        $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+        $form.Close()
+    })
+
+    $btnCancel.Add_Click({
+        $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $form.Close()
+    })
+
+    [void]$form.ShowDialog()
+    return $Script:GUIResult
 }
 #endregion
 
@@ -639,12 +817,16 @@ function Test-ExistingInstance {
     $Service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 
     if ($Service) {
-        Write-Host ""
         Write-Warn "SQL Server instance '$InstanceName' zaten kurulu!"
         Write-Warn "Servis durumu: $($Service.Status)"
-        Write-Host ""
-        $Continue = Read-Host "  Yine de devam etmek istiyor musunuz? (E/H) [H]"
-        if ($Continue -notmatch '^[EeYy]') {
+
+        $result = [System.Windows.Forms.MessageBox]::Show(
+            "SQL Server instance '$InstanceName' zaten kurulu!`nServis durumu: $($Service.Status)`n`nYine de devam etmek istiyor musunuz?",
+            "Mevcut Instance Tespit Edildi",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+        if ($result -ne [System.Windows.Forms.DialogResult]::Yes) {
             Write-Host "  Kurulum iptal edildi." -ForegroundColor Red
             return $false
         }
@@ -1242,96 +1424,103 @@ function Main {
     try {
         Write-Banner
 
-        # 1. On gereksinimler
-        Test-Prerequisites
+        # 1. GUI goster - kullanici bilesenleri secsin
+        $Selections = Show-InstallGUI
 
-        # 2. Versiyon secimi
-        $SelectedVersion = Get-SqlVersionMenu
-
-        # 3. Instance secimi
-        $SelectedInstance = Get-InstanceNameMenu
-
-        # 4. Mevcut instance kontrolu
-        if (-not (Test-ExistingInstance $SelectedInstance)) { return }
-
-        # 5. Ozet ve onay
-        Write-Host ""
-        Write-Host "  +---------------------------------+" -ForegroundColor Cyan
-        Write-Host "  | KURULUM OZETI                   |" -ForegroundColor Cyan
-        Write-Host "  +---------------------------------+" -ForegroundColor Cyan
-        Write-Host "  | 1. Visual C++ Runtimes (Tumu)   |" -ForegroundColor Yellow
-        Write-Host "  | 2. .NET 3.5 + 4.8.1 Aktivasyon |" -ForegroundColor Yellow
-        Write-Host "  | 3. SQL Server $SelectedVersion Kurulumu   |" -ForegroundColor Yellow
-        Write-Host "  +---------------------------------+" -ForegroundColor Cyan
-        Write-Host "  | Versiyon : SQL Server $SelectedVersion     |" -ForegroundColor White
-        Write-Host "  | Instance : $($SelectedInstance.PadRight(21))|" -ForegroundColor White
-        Write-Host "  | SA Sifre : $($Script:SAPassword.PadRight(21))|" -ForegroundColor White
-        Write-Host "  | Collation: Turkish_CI_AS        |" -ForegroundColor White
-        Write-Host "  | Protokol : TCP/IP + Named Pipes |" -ForegroundColor White
-        Write-Host "  | Performans: Otomatik Optimize   |" -ForegroundColor White
-        Write-Host "  +---------------------------------+" -ForegroundColor Cyan
-        Write-Host ""
-
-        $Confirm = Read-Host "  Kuruluma baslansin mi? (E/H) [E]"
-        if ([string]::IsNullOrWhiteSpace($Confirm)) { $Confirm = "E" }
-        if ($Confirm -notmatch '^[EeYy]') {
+        if (-not $Selections) {
+            Write-Host ""
             Write-Host "  Kurulum iptal edildi." -ForegroundColor Red
             return
         }
 
-        # 6. Visual C++ Runtime kutuphanelerini kur
-        Install-VCRuntimes
-
-        # 7. .NET Framework 3.5 ve 4.8.1 etkinlestir
-        Enable-DotNetFrameworks
-
-        # 8. SQL Server medyasini indir ve setup path'ini al
-        Write-Step "SQL Server kurulumuna geciliyor..."
-        $SetupExe = Get-SqlSetupPath -Version $SelectedVersion
-
-        # 9. SQL Server'i kur
-        $InstallSuccess = Install-SqlServerEngine -Version $SelectedVersion -InstanceName $SelectedInstance -SetupExePath $SetupExe
-
-        if (-not $InstallSuccess) {
-            Write-Err "SQL Server kurulumu basarisiz oldu. Script sonlaniyor."
-            return
+        # SA password guncelle
+        if ($Selections.InstallSQL -and $Selections.SAPassword) {
+            $Script:SAPassword = $Selections.SAPassword
         }
 
-        # 10. Servisin hazir olmasini bekle
-        $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
+        # Secilen bilesenleri goster
+        Write-Host ""
+        Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
+        Write-Host "  |         SECILEN BILESENLER               |" -ForegroundColor Cyan
+        Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
+        if ($Selections.InstallVCPP)   { Write-Host "  |  [+] Visual C++ Runtimes (2005-2022)   |" -ForegroundColor Green }
+        if ($Selections.InstallNet35)  { Write-Host "  |  [+] .NET Framework 3.5                |" -ForegroundColor Green }
+        if ($Selections.InstallNet481) { Write-Host "  |  [+] .NET Framework 4.8.1              |" -ForegroundColor Green }
+        if ($Selections.InstallSQL) {
+            $sqlLine = "  |  [+] SQL Server $($Selections.SqlVersion) - $($Selections.InstanceName)"
+            $sqlLine = $sqlLine.PadRight(43) + "|"
+            Write-Host $sqlLine -ForegroundColor Green
+        }
+        Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
+        Write-Host ""
 
-        # 11. Protokolleri yapilandir (registry)
-        Set-SqlProtocols -InstanceName $SelectedInstance
+        # 2. On gereksinimler
+        Test-Prerequisites
 
-        # 12. SQL Browser servisini baslat
-        Set-SqlBrowserService
-
-        # 13. Servisi yeniden baslat (protokol degisiklikleri icin)
-        Restart-SqlService -InstanceName $SelectedInstance
-
-        # 14. Servisin tekrar hazir olmasini bekle
-        $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
-
-        if ($Ready) {
-            # 15. Performans optimizasyonu
-            Set-SqlPerformanceConfig -InstanceName $SelectedInstance -Version $SelectedVersion
+        # 3. Visual C++ Runtime
+        if ($Selections.InstallVCPP) {
+            Install-VCRuntimes
+        } else {
+            Write-Info "Visual C++ Runtimes atlaniyor (secilmedi)"
         }
 
-        # 16. SQL Native Client
-        Install-NativeClient
-
-        # 17. Baglanti testi
-        if ($Ready) {
-            Test-FinalConnection -InstanceName $SelectedInstance
+        # 4. .NET Framework
+        if ($Selections.InstallNet35 -or $Selections.InstallNet481) {
+            Enable-DotNetFrameworks -InstallNet35:$Selections.InstallNet35 -InstallNet481:$Selections.InstallNet481
+        } else {
+            Write-Info ".NET Framework atlaniyor (secilmedi)"
         }
 
-        # 18. Ozet
-        Show-Summary -Version $SelectedVersion -InstanceName $SelectedInstance
+        # 5. SQL Server (opsiyonel)
+        if ($Selections.InstallSQL) {
+            $SelectedVersion = $Selections.SqlVersion
+            $SelectedInstance = $Selections.InstanceName
+
+            # Mevcut instance kontrolu
+            if (-not (Test-ExistingInstance $SelectedInstance)) {
+                Write-Warn "SQL Server kurulumu kullanici tarafindan iptal edildi."
+            } else {
+                Write-Step "SQL Server kurulumuna geciliyor..."
+                $SetupExe = Get-SqlSetupPath -Version $SelectedVersion
+
+                $InstallSuccess = Install-SqlServerEngine -Version $SelectedVersion -InstanceName $SelectedInstance -SetupExePath $SetupExe
+
+                if ($InstallSuccess) {
+                    $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
+                    Set-SqlProtocols -InstanceName $SelectedInstance
+                    Set-SqlBrowserService
+                    Restart-SqlService -InstanceName $SelectedInstance
+                    $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
+
+                    if ($Ready) {
+                        Set-SqlPerformanceConfig -InstanceName $SelectedInstance -Version $SelectedVersion
+                    }
+
+                    Install-NativeClient
+
+                    if ($Ready) {
+                        Test-FinalConnection -InstanceName $SelectedInstance
+                    }
+
+                    Show-Summary -Version $SelectedVersion -InstanceName $SelectedInstance
+                } else {
+                    Write-Err "SQL Server kurulumu basarisiz oldu."
+                }
+            }
+        } else {
+            Write-Info "SQL Server kurulumu atlaniyor (secilmedi)"
+        }
 
         # Temizlik
         if (Test-Path $Script:TempBase) {
             Remove-Item $Script:TempBase -Recurse -Force -ErrorAction SilentlyContinue
         }
+
+        # Final
+        Write-Host ""
+        Write-Host "================================================================" -ForegroundColor Green
+        Write-Host "            TUM ISLEMLER TAMAMLANDI!" -ForegroundColor Green
+        Write-Host "================================================================" -ForegroundColor Green
     }
     catch {
         Write-Host ""
