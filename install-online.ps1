@@ -19,7 +19,7 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 #region YAPILANDIRMA
 # ============================================================================
 $Script:SAPassword       = "Bay_T252!"
-$Script:ScriptVersion    = "3.0"
+$Script:ScriptVersion    = "3.1"
 $Script:TempBase         = "$env:TEMP\BaytSqlInstall"
 $Script:ScriptUrl        = "https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1"
 
@@ -27,19 +27,6 @@ $Script:ScriptUrl        = "https://raw.githubusercontent.com/puffytr/bayt-suppo
 # Type: "Direct" = dogrudan extract edilebilir installer (.exe /x: ile)
 # Type: "SSEI"   = SQL Server Express Setup Installer (once /ACTION=Download ile medya indirir)
 $Script:SqlDownloadInfo = @{
-    "2014" = @{
-        Type     = "Direct"
-        Urls     = @(
-            "https://download.microsoft.com/download/E/A/E/EAE6F7FC-767A-4038-A954-49B8B05D04EB/Express%2064BIT/SQLEXPR_x64_ENU.exe",
-            "https://download.microsoft.com/download/E/A/E/EAE6F7FC-767A-4038-A954-49B8B05D04EB/ExpressAndTools/SQLEXPRWT_x64_ENU.exe"
-        )
-        Features             = "SQLENGINE"
-        SupportsInstantInit  = $false
-        SupportsTempDBParams = $false
-        MajorVersion         = 12
-        ExpressMaxMemoryMB   = 1024
-        ExpressMaxCores      = 1
-    }
     "2017" = @{
         Type     = "SSEI"
         Urls     = @(
@@ -329,6 +316,166 @@ function Download-FileWithRetry {
     Write-Err "Dosya hicbir URL'den indirilemedi!"
     return $false
 }
+
+function Get-InstalledVCRuntimes {
+    $Installed = @{}
+    $UninstallPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+
+    $VCEntries = Get-ItemProperty $UninstallPaths -ErrorAction SilentlyContinue |
+                 Where-Object { $_.DisplayName -match "Microsoft Visual C\+\+" -or $_.DisplayName -match "Visual C\+\+ .* Redistributable" }
+
+    $VersionPatterns = @(
+        @{ Year = "2005"; Pattern = "2005" },
+        @{ Year = "2008"; Pattern = "2008" },
+        @{ Year = "2010"; Pattern = "2010" },
+        @{ Year = "2012"; Pattern = "2012" },
+        @{ Year = "2013"; Pattern = "2013" },
+        @{ Year = "2015-2022"; Pattern = "201[5-9]|202[0-4]" }
+    )
+
+    foreach ($vp in $VersionPatterns) {
+        $x86Found = @($VCEntries | Where-Object { $_.DisplayName -match $vp.Pattern -and $_.DisplayName -match "x86" })
+        $x64Found = @($VCEntries | Where-Object { $_.DisplayName -match $vp.Pattern -and $_.DisplayName -match "x64" })
+        $Installed[$vp.Year] = @{
+            x86 = ($x86Found.Count -gt 0)
+            x64 = ($x64Found.Count -gt 0)
+        }
+    }
+
+    return $Installed
+}
+
+function Get-InstalledSqlInstances {
+    $Instances = @()
+    try {
+        $SqlReg = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL" -ErrorAction SilentlyContinue
+        if ($SqlReg) {
+            $SqlReg.PSObject.Properties |
+                Where-Object { $_.Name -notin @('PSPath','PSParentPath','PSChildName','PSDrive','PSProvider') } |
+                ForEach-Object {
+                    $InstName = $_.Name
+                    $ServiceName = if ($InstName -eq "MSSQLSERVER") { "MSSQLSERVER" } else { "MSSQL`$$InstName" }
+                    $Svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+                    $Instances += @{
+                        Name = $InstName
+                        Status = if ($Svc) { $Svc.Status.ToString() } else { "Bilinmiyor" }
+                    }
+                }
+        }
+    } catch {}
+    return $Instances
+}
+
+function Get-DotNetStatus {
+    $Status = @{
+        Net35Installed  = $false
+        Net481Installed = $false
+        Net4Release     = 0
+    }
+
+    try {
+        $NetFx3 = Get-WindowsOptionalFeature -Online -FeatureName "NetFx3" -ErrorAction SilentlyContinue
+        $Status.Net35Installed = ($NetFx3 -and $NetFx3.State -eq "Enabled")
+    } catch {}
+
+    try {
+        $DotNet4 = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full\" -Name "Release" -ErrorAction SilentlyContinue
+        if ($DotNet4) {
+            $Status.Net4Release = $DotNet4.Release
+            $Status.Net481Installed = ($DotNet4.Release -ge 533320)
+        }
+    } catch {}
+
+    return $Status
+}
+
+function Get-DiskSectorInfo {
+    <#
+    .SYNOPSIS
+        Disk sektor boyutunu kontrol eder.
+        SQL Server max 4096 byte destekler; Win11 NVMe suruculer 8K/16K raporlayabilir.
+        Ref: https://learn.microsoft.com/en-us/troubleshoot/sql/database-engine/database-file-operations/troubleshoot-os-4kb-disk-sector-size
+    #>
+    $Result = @{
+        SectorSize       = 0
+        NeedsFix         = $false
+        RegistryFixApplied = $false
+        DriveLetter      = $env:SystemDrive
+    }
+
+    try {
+        # fsutil ile fiziksel sektor boyutunu oku
+        $FsInfo = & fsutil fsinfo sectorinfo $env:SystemDrive 2>&1
+        $AtomLine = $FsInfo | Select-String "PhysicalBytesPerSectorForAtomicity"
+        $PerfLine = $FsInfo | Select-String "PhysicalBytesPerSectorForPerformance"
+
+        $AtomSize = 0; $PerfSize = 0
+        if ($AtomLine -match ':\s*(\d+)') { $AtomSize = [int]$Matches[1] }
+        if ($PerfLine -match ':\s*(\d+)') { $PerfSize = [int]$Matches[1] }
+
+        # En buyuk degeri al (Microsoft dokumantasyonu)
+        $PhysicalSector = [math]::Max($AtomSize, $PerfSize)
+        $Result.SectorSize = $PhysicalSector
+
+        # SQL Server 4096 byte'tan buyugunu desteklemiyor
+        if ($PhysicalSector -gt 4096) {
+            $Result.NeedsFix = $true
+        }
+    } catch {
+        # fsutil calistirilamazsa sektor bilgisi alinamaz
+        $Result.SectorSize = -1
+    }
+
+    # Registry fix kontrol - stornvme
+    try {
+        $RegPath = "HKLM:\SYSTEM\CurrentControlSet\Services\stornvme\Parameters\Device"
+        if (Test-Path $RegPath) {
+            $RegVal = Get-ItemProperty $RegPath -Name "ForcedPhysicalSectorSizeInBytes" -ErrorAction SilentlyContinue
+            if ($RegVal -and $RegVal.ForcedPhysicalSectorSizeInBytes) {
+                $vals = @($RegVal.ForcedPhysicalSectorSizeInBytes)
+                if ($vals -contains "* 4095") {
+                    $Result.RegistryFixApplied = $true
+                }
+            }
+        }
+    } catch {}
+
+    return $Result
+}
+
+function Set-ForcedPhysicalSectorSize {
+    <#
+    .SYNOPSIS
+        stornvme registry key ile sektor boyutunu 4KB olarak emule eder.
+        Degisiklik yeniden baslatma sonrasi aktif olur.
+    #>
+    try {
+        $RegPath = "HKLM:\SYSTEM\CurrentControlSet\Services\stornvme\Parameters\Device"
+
+        # Dizin yoksa olustur
+        if (-not (Test-Path $RegPath)) {
+            New-Item -Path $RegPath -Force | Out-Null
+            Write-Info "Registry yolu olusturuldu: $RegPath"
+        }
+
+        # ForcedPhysicalSectorSizeInBytes = "* 4095"
+        New-ItemProperty -Path $RegPath `
+            -Name "ForcedPhysicalSectorSizeInBytes" `
+            -PropertyType MultiString `
+            -Value @("* 4095") `
+            -Force | Out-Null
+
+        Write-OK "Registry duzeltmesi uygulandi: ForcedPhysicalSectorSizeInBytes = '* 4095'"
+        Write-Info "Kaynak: https://learn.microsoft.com/en-us/troubleshoot/sql/database-engine/database-file-operations/troubleshoot-os-4kb-disk-sector-size"
+        return $true
+    } catch {
+        Write-Err "Registry duzeltmesi uygulanamadi: $($_.Exception.Message)"
+        return $false
+    }
+}
 #endregion
 
 # ============================================================================
@@ -338,9 +485,33 @@ function Download-FileWithRetry {
 function Install-VCRuntimes {
     Write-Step "Visual C++ Runtime kutuphaneleri kuruluyor..."
 
-    $VCRedistDir = $null
+    # Kurulu olan VC++ versiyonlarini tespit et
+    $InstalledVC = Get-InstalledVCRuntimes
+    $Is64Bit = [Environment]::Is64BitOperatingSystem
 
-    # Yerel dosyalar mevcut mu kontrol et
+    $Installs = @(
+        @{ Name = "2005"; x86 = "vcredist2005_x86.exe"; x64 = "vcredist2005_x64.exe"; Args = "/q";
+           DlX86 = "https://download.microsoft.com/download/8/B/4/8B42259F-5D70-43F4-AC2E-4B208FD8D66A/vcredist_x86.EXE";
+           DlX64 = "https://download.microsoft.com/download/8/B/4/8B42259F-5D70-43F4-AC2E-4B208FD8D66A/vcredist_x64.EXE" },
+        @{ Name = "2008"; x86 = "vcredist2008_x86.exe"; x64 = "vcredist2008_x64.exe"; Args = "/qb";
+           DlX86 = "https://download.microsoft.com/download/5/D/8/5D8C65CB-C849-4025-8E95-C3966CAFD8AE/vcredist_x86.exe";
+           DlX64 = "https://download.microsoft.com/download/5/D/8/5D8C65CB-C849-4025-8E95-C3966CAFD8AE/vcredist_x64.exe" },
+        @{ Name = "2010"; x86 = "vcredist2010_x86.exe"; x64 = "vcredist2010_x64.exe"; Args = "/passive /norestart";
+           DlX86 = "https://download.microsoft.com/download/1/6/5/165255E7-1014-4D0A-B094-B6A430A6BFFC/vcredist_x86.exe";
+           DlX64 = "https://download.microsoft.com/download/1/6/5/165255E7-1014-4D0A-B094-B6A430A6BFFC/vcredist_x64.exe" },
+        @{ Name = "2012"; x86 = "vcredist2012_x86.exe"; x64 = "vcredist2012_x64.exe"; Args = "/passive /norestart";
+           DlX86 = "https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x86.exe";
+           DlX64 = "https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x64.exe" },
+        @{ Name = "2013"; x86 = "vcredist2013_x86.exe"; x64 = "vcredist2013_x64.exe"; Args = "/passive /norestart";
+           DlX86 = "https://aka.ms/highdpimfc2013x86enu";
+           DlX64 = "https://aka.ms/highdpimfc2013x64enu" },
+        @{ Name = "2015-2022"; x86 = "vcredist2015_2017_2019_2022_x86.exe"; x64 = "vcredist2015_2017_2019_2022_x64.exe"; Args = "/passive /norestart";
+           DlX86 = "https://aka.ms/vs/17/release/vc_redist.x86.exe";
+           DlX64 = "https://aka.ms/vs/17/release/vc_redist.x64.exe" }
+    )
+
+    # Yerel dosya dizinini kontrol et
+    $VCRedistDir = $null
     if ($Script:ScriptDir) {
         $LocalVCDir = Join-Path $Script:ScriptDir "Visual-C-Runtimes-All-in-One-Dec-2025"
         if (Test-Path $LocalVCDir) {
@@ -349,76 +520,70 @@ function Install-VCRuntimes {
         }
     }
 
+    # Yerel dosya yoksa temp dizini hazirla
     if (-not $VCRedistDir) {
-        # IEX modunda - Microsoft'tan indir
-        Write-Info "VC++ Runtime dosyalari Microsoft'tan indiriliyor..."
         New-Item -Path $Script:TempBase -ItemType Directory -Force | Out-Null
         $VCRedistDir = "$($Script:TempBase)\VCRedist"
         New-Item -Path $VCRedistDir -ItemType Directory -Force | Out-Null
-
-        $VCDownloads = @(
-            @{ Name = "vcredist2005_x86.exe"; Url = "https://download.microsoft.com/download/8/B/4/8B42259F-5D70-43F4-AC2E-4B208FD8D66A/vcredist_x86.EXE" },
-            @{ Name = "vcredist2005_x64.exe"; Url = "https://download.microsoft.com/download/8/B/4/8B42259F-5D70-43F4-AC2E-4B208FD8D66A/vcredist_x64.EXE" },
-            @{ Name = "vcredist2008_x86.exe"; Url = "https://download.microsoft.com/download/5/D/8/5D8C65CB-C849-4025-8E95-C3966CAFD8AE/vcredist_x86.exe" },
-            @{ Name = "vcredist2008_x64.exe"; Url = "https://download.microsoft.com/download/5/D/8/5D8C65CB-C849-4025-8E95-C3966CAFD8AE/vcredist_x64.exe" },
-            @{ Name = "vcredist2010_x86.exe"; Url = "https://download.microsoft.com/download/1/6/5/165255E7-1014-4D0A-B094-B6A430A6BFFC/vcredist_x86.exe" },
-            @{ Name = "vcredist2010_x64.exe"; Url = "https://download.microsoft.com/download/1/6/5/165255E7-1014-4D0A-B094-B6A430A6BFFC/vcredist_x64.exe" },
-            @{ Name = "vcredist2012_x86.exe"; Url = "https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x86.exe" },
-            @{ Name = "vcredist2012_x64.exe"; Url = "https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x64.exe" },
-            @{ Name = "vcredist2013_x86.exe"; Url = "https://aka.ms/highdpimfc2013x86enu" },
-            @{ Name = "vcredist2013_x64.exe"; Url = "https://aka.ms/highdpimfc2013x64enu" },
-            @{ Name = "vcredist2015_2017_2019_2022_x86.exe"; Url = "https://aka.ms/vs/17/release/vc_redist.x86.exe" },
-            @{ Name = "vcredist2015_2017_2019_2022_x64.exe"; Url = "https://aka.ms/vs/17/release/vc_redist.x64.exe" }
-        )
-
-        foreach ($vc in $VCDownloads) {
-            $OutPath = Join-Path $VCRedistDir $vc.Name
-            try {
-                Write-Info "Indiriliyor: $($vc.Name)..."
-                $wc = New-Object System.Net.WebClient
-                $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                $wc.DownloadFile($vc.Url, $OutPath)
-                $wc.Dispose()
-            } catch {
-                Write-Warn "$($vc.Name) indirilemedi: $($_.Exception.Message)"
-            }
-        }
     }
 
-    # Kurulum
-    $Is64Bit = [Environment]::Is64BitOperatingSystem
-
-    $Installs = @(
-        @{ Name = "2005"; x86 = "vcredist2005_x86.exe"; x64 = "vcredist2005_x64.exe"; Args = "/q" },
-        @{ Name = "2008"; x86 = "vcredist2008_x86.exe"; x64 = "vcredist2008_x64.exe"; Args = "/qb" },
-        @{ Name = "2010"; x86 = "vcredist2010_x86.exe"; x64 = "vcredist2010_x64.exe"; Args = "/passive /norestart" },
-        @{ Name = "2012"; x86 = "vcredist2012_x86.exe"; x64 = "vcredist2012_x64.exe"; Args = "/passive /norestart" },
-        @{ Name = "2013"; x86 = "vcredist2013_x86.exe"; x64 = "vcredist2013_x64.exe"; Args = "/passive /norestart" },
-        @{ Name = "2015-2022"; x86 = "vcredist2015_2017_2019_2022_x86.exe"; x64 = "vcredist2015_2017_2019_2022_x64.exe"; Args = "/passive /norestart" }
-    )
-
     $SuccessCount = 0
+    $SkipCount = 0
     $TotalCount = 0
 
     foreach ($inst in $Installs) {
-        Write-Info "Visual C++ $($inst.Name) kuruluyor..."
+        $vcStatus = $InstalledVC[$inst.Name]
+        $needX86 = -not ($vcStatus -and $vcStatus.x86)
+        $needX64 = $Is64Bit -and (-not ($vcStatus -and $vcStatus.x64))
 
-        # x86
-        $x86Path = Join-Path $VCRedistDir $inst.x86
-        if (Test-Path $x86Path) {
-            $TotalCount++
-            $p = Start-Process -FilePath $x86Path -ArgumentList $inst.Args -Wait -PassThru
-            if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010 -or $p.ExitCode -eq 1638) {
-                Write-OK "VC++ $($inst.Name) x86 kuruldu"
-                $SuccessCount++
-            } else {
-                Write-Warn "VC++ $($inst.Name) x86 - Exit Code: $($p.ExitCode)"
-            }
+        if (-not $needX86 -and -not $needX64) {
+            Write-OK "VC++ $($inst.Name) zaten kurulu - atlaniyor"
+            $SkipCount++
+            continue
         }
 
-        # x64
-        if ($Is64Bit) {
+        # x86 kurulum
+        if ($needX86) {
+            $x86Path = Join-Path $VCRedistDir $inst.x86
+            if (-not (Test-Path $x86Path)) {
+                try {
+                    Write-Info "Indiriliyor: $($inst.x86)..."
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    $wc.DownloadFile($inst.DlX86, $x86Path)
+                    $wc.Dispose()
+                } catch {
+                    Write-Warn "$($inst.x86) indirilemedi: $($_.Exception.Message)"
+                }
+            }
+            if (Test-Path $x86Path) {
+                $TotalCount++
+                $p = Start-Process -FilePath $x86Path -ArgumentList $inst.Args -Wait -PassThru
+                if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010 -or $p.ExitCode -eq 1638) {
+                    Write-OK "VC++ $($inst.Name) x86 kuruldu"
+                    $SuccessCount++
+                } else {
+                    Write-Warn "VC++ $($inst.Name) x86 - Exit Code: $($p.ExitCode)"
+                }
+            }
+        } else {
+            Write-OK "VC++ $($inst.Name) x86 zaten kurulu"
+        }
+
+        # x64 kurulum
+        if ($needX64) {
             $x64Path = Join-Path $VCRedistDir $inst.x64
+            if (-not (Test-Path $x64Path)) {
+                try {
+                    Write-Info "Indiriliyor: $($inst.x64)..."
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    $wc.DownloadFile($inst.DlX64, $x64Path)
+                    $wc.Dispose()
+                } catch {
+                    Write-Warn "$($inst.x64) indirilemedi: $($_.Exception.Message)"
+                }
+            }
             if (Test-Path $x64Path) {
                 $TotalCount++
                 $p = Start-Process -FilePath $x64Path -ArgumentList $inst.Args -Wait -PassThru
@@ -429,10 +594,16 @@ function Install-VCRuntimes {
                     Write-Warn "VC++ $($inst.Name) x64 - Exit Code: $($p.ExitCode)"
                 }
             }
+        } elseif ($Is64Bit) {
+            Write-OK "VC++ $($inst.Name) x64 zaten kurulu"
         }
     }
 
-    Write-OK "Visual C++ Runtime kurulumu tamamlandi ($SuccessCount/$TotalCount basarili)"
+    if ($SkipCount -gt 0) {
+        Write-OK "VC++ Runtime: $SuccessCount yeni kuruldu, $SkipCount zaten mevcuttu"
+    } else {
+        Write-OK "Visual C++ Runtime kurulumu tamamlandi ($SuccessCount/$TotalCount basarili)"
+    }
 }
 #endregion
 
@@ -516,9 +687,30 @@ function Show-InstallGUI {
     Add-Type -AssemblyName System.Drawing
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
+    # --- Sistem on tespiti ---
+    $DotNetStatus = Get-DotNetStatus
+    $InstalledVC  = Get-InstalledVCRuntimes
+    $ExistingSql  = Get-InstalledSqlInstances
+    $DiskSector   = Get-DiskSectorInfo
+
+    # VC++ kurulu sayisi hesapla
+    $VCTotal = 6
+    $VCInstalledCount = 0
+    foreach ($key in $InstalledVC.Keys) {
+        $vc = $InstalledVC[$key]
+        if ($vc.x86 -and $vc.x64) { $VCInstalledCount++ }
+    }
+    $AllVCInstalled = ($VCInstalledCount -eq $VCTotal)
+
+    # Kurulu SQL instance isimlerini listele
+    $ExistingSqlNames = @()
+    if ($ExistingSql -and $ExistingSql.Count -gt 0) {
+        $ExistingSqlNames = @($ExistingSql | ForEach-Object { $_.Name.ToUpper() })
+    }
+
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Bayt Support Otomatik Kurulum v$($Script:ScriptVersion)"
-    $form.Size = New-Object System.Drawing.Size(540, 540)
+    $form.Size = New-Object System.Drawing.Size(540, 600)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
@@ -553,31 +745,55 @@ function Show-InstallGUI {
     $form.Controls.Add($grpComp)
 
     $normalFont = New-Object System.Drawing.Font("Segoe UI", 9.5)
+    $smallFont  = New-Object System.Drawing.Font("Segoe UI", 8)
 
+    # VC++ Checkbox + durum
     $chkVCPP = New-Object System.Windows.Forms.CheckBox
-    $chkVCPP.Text = "Visual C++ Runtimes (2005 - 2022, x86 + x64)"
-    $chkVCPP.Checked = $true
+    if ($AllVCInstalled) {
+        $chkVCPP.Text = "Visual C++ Runtimes (2005 - 2022)  [TUMU KURULU]"
+        $chkVCPP.Checked = $false
+        $chkVCPP.ForeColor = [System.Drawing.Color]::Gray
+    } else {
+        $vcMissing = $VCTotal - $VCInstalledCount
+        $chkVCPP.Text = "Visual C++ Runtimes (2005 - 2022)  [$vcMissing eksik]"
+        $chkVCPP.Checked = $true
+    }
     $chkVCPP.Location = New-Object System.Drawing.Point(15, 28)
     $chkVCPP.AutoSize = $true
     $chkVCPP.Font = $normalFont
     $grpComp.Controls.Add($chkVCPP)
 
+    # .NET 3.5 Checkbox + durum
     $chkNet35 = New-Object System.Windows.Forms.CheckBox
-    $chkNet35.Text = ".NET Framework 3.5"
-    $chkNet35.Checked = $true
+    if ($DotNetStatus.Net35Installed) {
+        $chkNet35.Text = ".NET Framework 3.5  [KURULU]"
+        $chkNet35.Checked = $false
+        $chkNet35.ForeColor = [System.Drawing.Color]::Gray
+    } else {
+        $chkNet35.Text = ".NET Framework 3.5  [KURULU DEGIL]"
+        $chkNet35.Checked = $true
+    }
     $chkNet35.Location = New-Object System.Drawing.Point(15, 58)
     $chkNet35.AutoSize = $true
     $chkNet35.Font = $normalFont
     $grpComp.Controls.Add($chkNet35)
 
+    # .NET 4.8.1 Checkbox + durum
     $chkNet481 = New-Object System.Windows.Forms.CheckBox
-    $chkNet481.Text = ".NET Framework 4.8.1"
-    $chkNet481.Checked = $true
+    if ($DotNetStatus.Net481Installed) {
+        $chkNet481.Text = ".NET Framework 4.8.1  [KURULU]"
+        $chkNet481.Checked = $false
+        $chkNet481.ForeColor = [System.Drawing.Color]::Gray
+    } else {
+        $chkNet481.Text = ".NET Framework 4.8.1  [KURULU DEGIL]"
+        $chkNet481.Checked = $true
+    }
     $chkNet481.Location = New-Object System.Drawing.Point(15, 88)
     $chkNet481.AutoSize = $true
     $chkNet481.Font = $normalFont
     $grpComp.Controls.Add($chkNet481)
 
+    # SQL Checkbox
     $chkSQL = New-Object System.Windows.Forms.CheckBox
     $chkSQL.Text = "SQL Server Express Kurulumu"
     $chkSQL.Checked = $false
@@ -590,10 +806,11 @@ function Show-InstallGUI {
     $y += 170
 
     # --- SQL Ayarlari GroupBox ---
+    $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 180 } else { 145 }
     $grpSql = New-Object System.Windows.Forms.GroupBox
     $grpSql.Text = "SQL Server Ayarlari (SQL secildiginde aktif olur)"
     $grpSql.Location = New-Object System.Drawing.Point(15, $y)
-    $grpSql.Size = New-Object System.Drawing.Size(495, 145)
+    $grpSql.Size = New-Object System.Drawing.Size(495, $grpSqlHeight)
     $grpSql.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
     $grpSql.Enabled = $false
     $form.Controls.Add($grpSql)
@@ -606,7 +823,7 @@ function Show-InstallGUI {
     $grpSql.Controls.Add($lblVer)
 
     $cmbVersion = New-Object System.Windows.Forms.ComboBox
-    $cmbVersion.Items.AddRange(@("SQL Server 2019 (Onerilen)", "SQL Server 2022", "SQL Server 2017", "SQL Server 2014", "SQL Server 2025"))
+    $cmbVersion.Items.AddRange(@("SQL Server 2019 (Onerilen)", "SQL Server 2022", "SQL Server 2017", "SQL Server 2025"))
     $cmbVersion.SelectedIndex = 0
     $cmbVersion.Location = New-Object System.Drawing.Point(115, 29)
     $cmbVersion.Size = New-Object System.Drawing.Size(290, 25)
@@ -623,12 +840,20 @@ function Show-InstallGUI {
 
     $cmbInstance = New-Object System.Windows.Forms.ComboBox
     $cmbInstance.Items.AddRange(@("BaytTicariSQL", "BaytBossSQL", "Bayt", "SQLEXPRESS"))
-    $cmbInstance.SelectedIndex = 0
+    $cmbInstance.Text = "BaytTicariSQL"
     $cmbInstance.Location = New-Object System.Drawing.Point(115, 65)
     $cmbInstance.Size = New-Object System.Drawing.Size(290, 25)
-    $cmbInstance.DropDownStyle = "DropDown"  # Serbest yazi da girilebilir
+    $cmbInstance.DropDownStyle = "DropDown"  # Listeden sec veya serbest yaz
     $cmbInstance.Font = $normalFont
     $grpSql.Controls.Add($cmbInstance)
+
+    $lblInstHint = New-Object System.Windows.Forms.Label
+    $lblInstHint.Text = "(Listeden secin veya kendiniz yazin)"
+    $lblInstHint.Location = New-Object System.Drawing.Point(410, 68)
+    $lblInstHint.AutoSize = $true
+    $lblInstHint.Font = New-Object System.Drawing.Font("Segoe UI", 7)
+    $lblInstHint.ForeColor = [System.Drawing.Color]::Gray
+    $grpSql.Controls.Add($lblInstHint)
 
     $lblPass = New-Object System.Windows.Forms.Label
     $lblPass.Text = "SA Sifre:"
@@ -644,12 +869,68 @@ function Show-InstallGUI {
     $txtPassword.Font = $normalFont
     $grpSql.Controls.Add($txtPassword)
 
+    # Mevcut SQL Instance bilgisi goster
+    if ($ExistingSqlNames.Count -gt 0) {
+        $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) ($($_.Status))" }) -join ", "
+        $lblExistSql = New-Object System.Windows.Forms.Label
+        $lblExistSql.Text = "Mevcut instance: $sqlInstStr"
+        $lblExistSql.Location = New-Object System.Drawing.Point(15, 135)
+        $lblExistSql.Size = New-Object System.Drawing.Size(470, 35)
+        $lblExistSql.Font = $smallFont
+        $lblExistSql.ForeColor = [System.Drawing.Color]::OrangeRed
+        $grpSql.Controls.Add($lblExistSql)
+    }
+
     # SQL checkbox toggle
     $chkSQL.Add_CheckedChanged({
         $grpSql.Enabled = $chkSQL.Checked
     })
 
-    $y += 155
+    $y += ($grpSqlHeight + 10)
+
+    # --- Disk Sektor Uyarisi (4KB sorunu) ---
+    if ($DiskSector.NeedsFix) {
+        $sectorKB = [math]::Round($DiskSector.SectorSize / 1024, 0)
+        $grpDisk = New-Object System.Windows.Forms.GroupBox
+        $grpDisk.Location = New-Object System.Drawing.Point(15, $y)
+        $grpDisk.Size = New-Object System.Drawing.Size(495, 68)
+        $grpDisk.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+        $form.Controls.Add($grpDisk)
+
+        if ($DiskSector.RegistryFixApplied) {
+            $grpDisk.Text = "Disk Sektor Boyutu: ${sectorKB}KB (Registry fix mevcut)"
+            $grpDisk.ForeColor = [System.Drawing.Color]::DarkGreen
+            $lblDiskNote = New-Object System.Windows.Forms.Label
+            $lblDiskNote.Text = "ForcedPhysicalSectorSizeInBytes registry duzeltmesi zaten uygulanmis. Yeniden baslatma sonrasi aktif olur."
+            $lblDiskNote.Location = New-Object System.Drawing.Point(12, 22)
+            $lblDiskNote.Size = New-Object System.Drawing.Size(470, 38)
+            $lblDiskNote.Font = $smallFont
+            $lblDiskNote.ForeColor = [System.Drawing.Color]::DarkGreen
+            $grpDisk.Controls.Add($lblDiskNote)
+        } else {
+            $grpDisk.Text = "UYARI: Disk Sektor Boyutu ${sectorKB}KB (SQL Server uyumsuz!)"
+            $grpDisk.ForeColor = [System.Drawing.Color]::Red
+
+            $Script:chkSectorFix = New-Object System.Windows.Forms.CheckBox
+            $Script:chkSectorFix.Text = "Registry duzeltmesini uygula (ForcedPhysicalSectorSizeInBytes = 4KB)"
+            $Script:chkSectorFix.Checked = $true
+            $Script:chkSectorFix.Location = New-Object System.Drawing.Point(12, 22)
+            $Script:chkSectorFix.AutoSize = $true
+            $Script:chkSectorFix.Font = $normalFont
+            $Script:chkSectorFix.ForeColor = [System.Drawing.Color]::DarkRed
+            $grpDisk.Controls.Add($Script:chkSectorFix)
+
+            $lblDiskRef = New-Object System.Windows.Forms.Label
+            $lblDiskRef.Text = "Ref: MS Learn - 4KB disk sector size fix (yeniden baslatma gerekir)"
+            $lblDiskRef.Location = New-Object System.Drawing.Point(12, 46)
+            $lblDiskRef.AutoSize = $true
+            $lblDiskRef.Font = New-Object System.Drawing.Font("Segoe UI", 7)
+            $lblDiskRef.ForeColor = [System.Drawing.Color]::Gray
+            $grpDisk.Controls.Add($lblDiskRef)
+        }
+
+        $y += 78
+    }
 
     # --- Sistem Bilgisi ---
     $lblInfo = New-Object System.Windows.Forms.Label
@@ -688,6 +969,9 @@ function Show-InstallGUI {
     $btnCancel.Cursor = [System.Windows.Forms.Cursors]::Hand
     $form.Controls.Add($btnCancel)
 
+    # Form boyutunu ayarla
+    $form.ClientSize = New-Object System.Drawing.Size(524, ($y + 55))
+
     $form.AcceptButton = $btnInstall
     $form.CancelButton = $btnCancel
 
@@ -715,16 +999,40 @@ function Show-InstallGUI {
             return
         }
 
-        $versionMap = @{ 0 = "2019"; 1 = "2022"; 2 = "2017"; 3 = "2014"; 4 = "2025" }
+        # Mevcut SQL instance ile cakisma kontrolu
+        if ($chkSQL.Checked) {
+            $wantedName = $cmbInstance.Text.Trim().ToUpper()
+            if ($ExistingSqlNames -contains $wantedName) {
+                $answer = [System.Windows.Forms.MessageBox]::Show(
+                    "SQL Server instance '$wantedName' bu bilgisayarda zaten kurulu!`n`nAyni isimle kurulum yapilamaz. Farkli bir instance adi girin.",
+                    "Instance Cakismasi",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                )
+                return
+            }
+        }
+
+        $versionMap = @{ 0 = "2019"; 1 = "2022"; 2 = "2017"; 3 = "2025" }
+
+        # Disk sector fix secimi
+        $applySectorFix = $false
+        if ($DiskSector.NeedsFix -and (-not $DiskSector.RegistryFixApplied) -and $Script:chkSectorFix -and $Script:chkSectorFix.Checked) {
+            $applySectorFix = $true
+        }
 
         $Script:GUIResult = @{
-            InstallVCPP    = $chkVCPP.Checked
-            InstallNet35   = $chkNet35.Checked
-            InstallNet481  = $chkNet481.Checked
-            InstallSQL     = $chkSQL.Checked
-            SqlVersion     = $versionMap[$cmbVersion.SelectedIndex]
-            InstanceName   = $cmbInstance.Text.Trim().ToUpper()
-            SAPassword     = $txtPassword.Text
+            InstallVCPP      = $chkVCPP.Checked
+            InstallNet35     = $chkNet35.Checked
+            InstallNet481    = $chkNet481.Checked
+            InstallSQL       = $chkSQL.Checked
+            SqlVersion       = $versionMap[$cmbVersion.SelectedIndex]
+            InstanceName     = $cmbInstance.Text.Trim().ToUpper()
+            SAPassword       = $txtPassword.Text
+            ApplySectorFix   = $applySectorFix
+            SectorNeedsFix   = $DiskSector.NeedsFix
+            SectorFixApplied = $DiskSector.RegistryFixApplied
+            SectorSize       = $DiskSector.SectorSize
         }
 
         $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
@@ -808,30 +1116,6 @@ function Test-Prerequisites {
     Write-OK "CPU: $($CPUInfo.Name) ($LogicalCPUs logical core)"
 
     Write-Host ""
-}
-
-function Test-ExistingInstance {
-    param([string]$InstanceName)
-
-    $ServiceName = Get-SqlServiceName $InstanceName
-    $Service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-
-    if ($Service) {
-        Write-Warn "SQL Server instance '$InstanceName' zaten kurulu!"
-        Write-Warn "Servis durumu: $($Service.Status)"
-
-        $result = [System.Windows.Forms.MessageBox]::Show(
-            "SQL Server instance '$InstanceName' zaten kurulu!`nServis durumu: $($Service.Status)`n`nYine de devam etmek istiyor musunuz?",
-            "Mevcut Instance Tespit Edildi",
-            [System.Windows.Forms.MessageBoxButtons]::YesNo,
-            [System.Windows.Forms.MessageBoxIcon]::Warning
-        )
-        if ($result -ne [System.Windows.Forms.DialogResult]::Yes) {
-            Write-Host "  Kurulum iptal edildi." -ForegroundColor Red
-            return $false
-        }
-    }
-    return $true
 }
 #endregion
 
@@ -1017,20 +1301,6 @@ function Install-SqlServerEngine {
         $InstallArgs.Add("/SQLTEMPDBFILEGROWTH=128") | Out-Null
         $InstallArgs.Add("/SQLTEMPDBLOGFILESIZE=64") | Out-Null
         $InstallArgs.Add("/SQLTEMPDBLOGFILEGROWTH=64") | Out-Null
-    }
-
-    # 2014: .NET 3.5 gerekebilir
-    if ($Version -eq "2014") {
-        try {
-            $NetFx3 = Get-WindowsOptionalFeature -Online -FeatureName "NetFx3" -ErrorAction SilentlyContinue
-            if ($NetFx3 -and $NetFx3.State -ne "Enabled") {
-                Write-Info ".NET Framework 3.5 etkinlestiriliyor (SQL 2014 icin gerekli)..."
-                Enable-WindowsOptionalFeature -Online -FeatureName "NetFx3" -All -NoRestart -ErrorAction SilentlyContinue | Out-Null
-            }
-        }
-        catch {
-            Write-Warn ".NET 3.5 kontrol edilemedi: $($_.Exception.Message)"
-        }
     }
 
     # -------------------------------------------------------
@@ -1229,10 +1499,8 @@ function Set-SqlPerformanceConfig {
         "EXEC sp_configure 'remote admin connections', 1; RECONFIGURE;"
     )
 
-    # Backup compression (2014 Express'te yok)
-    if ($Version -ne "2014") {
-        $ConfigCommands += "EXEC sp_configure 'backup compression default', 1; RECONFIGURE;"
-    }
+    # Backup compression
+    $ConfigCommands += "EXEC sp_configure 'backup compression default', 1; RECONFIGURE;"
 
     $SuccessCount = 0
     foreach ($cmd in $ConfigCommands) {
@@ -1451,6 +1719,7 @@ function Main {
             $sqlLine = $sqlLine.PadRight(43) + "|"
             Write-Host $sqlLine -ForegroundColor Green
         }
+        if ($Selections.ApplySectorFix) { Write-Host "  |  [+] Disk Sektor Boyutu Fix (4KB)      |" -ForegroundColor Yellow }
         Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
         Write-Host ""
 
@@ -1471,41 +1740,68 @@ function Main {
             Write-Info ".NET Framework atlaniyor (secilmedi)"
         }
 
-        # 5. SQL Server (opsiyonel)
+        # 5. Disk Sektor Boyutu Fix (SQL oncesi)
+        if ($Selections.ApplySectorFix) {
+            Write-Step "Disk sektor boyutu duzeltmesi uygulanıyor..."
+            Write-Warn "Sistem diskiniz $($Selections.SectorSize) byte sektor boyutuna sahip (SQL Server max 4096 byte destekler)"
+            $FixApplied = Set-ForcedPhysicalSectorSize
+            if ($FixApplied) {
+                Write-OK "Registry duzeltmesi uygulandi."
+                Write-Warn "ONEMLI: Bu duzeltmenin aktif olmasi icin bilgisayarin yeniden baslatilmasi gerekir!"
+                if ($Selections.InstallSQL) {
+                    Write-Warn "SQL Server kurulumu sektor fix'i aktif olmadan basarisiz olabilir."
+                    Write-Warn "Oneri: Once bilgisayari yeniden baslatin, sonra script'i tekrar calistirin."
+                    Add-Type -AssemblyName System.Windows.Forms
+                    $rebootAnswer = [System.Windows.Forms.MessageBox]::Show(
+                        "Disk sektor boyutu duzeltmesi uygulandi.`n`nBu duzeltmenin aktif olmasi icin bilgisayarin YENIDEN BASLATILMASI gerekir.`nSQL Server kurulumu yeniden baslatma olmadan basarisiz olabilir.`n`nSimdi yeniden baslatmak istiyor musunuz?`n(Script yeniden baslama sonrasi tekrar calistirilmalidir)",
+                        "Yeniden Baslatma Gerekli",
+                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                        [System.Windows.Forms.MessageBoxIcon]::Warning
+                    )
+                    if ($rebootAnswer -eq [System.Windows.Forms.DialogResult]::Yes) {
+                        Write-Info "Bilgisayar 10 saniye icinde yeniden baslatilacak..."
+                        Start-Process "shutdown.exe" -ArgumentList "/r /t 10 /c `"Disk sektor fix icin yeniden baslatma - Bayt Support`"" -NoNewWindow
+                        return
+                    } else {
+                        Write-Warn "Yeniden baslatma ertelendi. SQL kurulumuna devam ediliyor (basarisiz olabilir!)..."
+                    }
+                }
+            }
+        } elseif ($Selections.SectorNeedsFix -and -not $Selections.SectorFixApplied -and $Selections.InstallSQL) {
+            Write-Warn "Disk sektor boyutu ($($Selections.SectorSize) byte) SQL Server ile uyumsuz ama fix uygulanmadi!"
+            Write-Warn "SQL Server kurulumu basarisiz olabilir."
+        }
+
+        # 6. SQL Server (opsiyonel)
         if ($Selections.InstallSQL) {
             $SelectedVersion = $Selections.SqlVersion
             $SelectedInstance = $Selections.InstanceName
 
-            # Mevcut instance kontrolu
-            if (-not (Test-ExistingInstance $SelectedInstance)) {
-                Write-Warn "SQL Server kurulumu kullanici tarafindan iptal edildi."
-            } else {
-                Write-Step "SQL Server kurulumuna geciliyor..."
-                $SetupExe = Get-SqlSetupPath -Version $SelectedVersion
+            Write-Step "SQL Server kurulumuna geciliyor..."
+            $SetupExe = Get-SqlSetupPath -Version $SelectedVersion
 
-                $InstallSuccess = Install-SqlServerEngine -Version $SelectedVersion -InstanceName $SelectedInstance -SetupExePath $SetupExe
+            $InstallSuccess = Install-SqlServerEngine -Version $SelectedVersion -InstanceName $SelectedInstance -SetupExePath $SetupExe
 
-                if ($InstallSuccess) {
-                    $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
-                    Set-SqlProtocols -InstanceName $SelectedInstance
-                    Set-SqlBrowserService
-                    Restart-SqlService -InstanceName $SelectedInstance
-                    $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
+            if ($InstallSuccess) {
+                $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
+                Set-SqlProtocols -InstanceName $SelectedInstance
+                Set-SqlBrowserService
+                Restart-SqlService -InstanceName $SelectedInstance
+                $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
 
-                    if ($Ready) {
-                        Set-SqlPerformanceConfig -InstanceName $SelectedInstance -Version $SelectedVersion
-                    }
-
-                    Install-NativeClient
-
-                    if ($Ready) {
-                        Test-FinalConnection -InstanceName $SelectedInstance
-                    }
-
-                    Show-Summary -Version $SelectedVersion -InstanceName $SelectedInstance
-                } else {
-                    Write-Err "SQL Server kurulumu basarisiz oldu."
+                if ($Ready) {
+                    Set-SqlPerformanceConfig -InstanceName $SelectedInstance -Version $SelectedVersion
                 }
+
+                Install-NativeClient
+
+                if ($Ready) {
+                    Test-FinalConnection -InstanceName $SelectedInstance
+                }
+
+                Show-Summary -Version $SelectedVersion -InstanceName $SelectedInstance
+            } else {
+                Write-Err "SQL Server kurulumu basarisiz oldu."
             }
         } else {
             Write-Info "SQL Server kurulumu atlaniyor (secilmedi)"
