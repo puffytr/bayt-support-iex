@@ -8,7 +8,7 @@ Hangi bilesenleri kurmak istediginizi gorsel arayuzden secin:
 - **.NET Framework 3.5** ve **4.8.1**
 - **SQL Server Express** *(opsiyonel)*
 - **Firewall Kurallari** (TCP 1433 / UDP 1434)
-- **Guc Plani** (High Performance)
+- **Guc Plani** (Nihai Performans / Ultimate Performance)
 - **NVMe Disk Sektor Fix** (Win11 4KB+ sorun tespiti)
 
 > SQL Server kurulumu **zorunlu degildir**. Sadece C++ ve .NET kurulumu icin de kullanabilirsiniz.
@@ -43,7 +43,7 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 │  [x] .NET Framework 3.5  [KURULU]               │
 │  [x] .NET Framework 4.8.1  [KURULU DEGIL]       │
 │  [ ] SQL Server Express Kurulumu                  │
-│  [x] Guc Planini Yuksek Performans Yap           │
+│  [x] Guc Planini Nihai Performans (Ultimate) Yap │
 │                                                   │
 │  SQL SERVER AYARLARI (SQL secildiginde aktif)     │
 │  Versiyon:  [SQL Server 2019 (Onerilen)]         │
@@ -112,7 +112,11 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 - Servis durumu anlik guncellenir
 
 ### Guc Plani (Power Plan)
-- **High Performance** guc planini otomatik etkinlestirir
+- **Nihai Performans (Ultimate Performance)** guc planini otomatik etkinlestirir
+- Windows 10 ve Windows 11 icin ayri tespit ve uygulama mantigi
+- Windows 11'de Modern Standby aktifse otomatik override eklenir
+- Plan bulunamazsa otomatik olarak sisteme eklenir
+- Basarisiz olursa High Performance'a fallback yapar
 - SQL Server performansi icin onerilir
 
 ### Diger Ozellikler
@@ -158,7 +162,7 @@ iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercont
 | `-InstallNet481` | .NET Framework 4.8.1 kur |
 | `-InstallSQL` | SQL Server Express kur |
 | `-InstallFirewall` | Firewall kurallari olustur |
-| `-SetPowerPlan` | Guc planini High Performance yap |
+| `-SetPowerPlan` | Guc planini Nihai Performans (Ultimate) yap |
 | `-SqlVersion` | SQL versiyonu: `2017`, `2019`, `2022`, `2025` |
 | `-InstanceName` | SQL instance adi |
 | `-SAPass` | SA sifresi |

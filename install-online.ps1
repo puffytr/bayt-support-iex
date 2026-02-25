@@ -34,7 +34,7 @@ if ($Help) {
     Write-Host "  -InstallNet481     .NET Framework 4.8.1 kur"
     Write-Host "  -InstallSQL        SQL Server Express kur"
     Write-Host "  -InstallFirewall   Firewall kurallari olustur"
-    Write-Host "  -SetPowerPlan      Guc planini High Performance yap"
+    Write-Host "  -SetPowerPlan      Guc planini Nihai Performans (Ultimate) yap"
     Write-Host "  -SqlVersion        SQL versiyonu (2017/2019/2022/2025)"
     Write-Host "  -InstanceName      SQL instance adi"
     Write-Host "  -SAPass            SA sifresi"
@@ -563,30 +563,80 @@ function Test-ScriptUpdate {
     return @{ UpdateAvailable = $false; RemoteVersion = $Script:ScriptVersion }
 }
 
-function Set-HighPerformancePowerPlan {
-    Write-Step "Guc plani ayarlaniyor..."
+function Set-UltimatePerformancePowerPlan {
+    Write-Step "Guc plani ayarlaniyor (Nihai Performans)..."
     try {
-        # High Performance GUID - Windows built-in
-        $HighPerfGUID = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+        # Ultimate Performance GUID
+        $UltimatePerfGUID = "e9a42b02-d5df-448d-aa00-03f14749eb61"
+        $OSBuild = [System.Environment]::OSVersion.Version.Build
+        $IsWin11 = $OSBuild -ge 22000
+
+        # Mevcut plan kontrolu
         $CurrentPlan = powercfg /getactivescheme 2>&1
-        if ($CurrentPlan -match $HighPerfGUID) {
-            Write-OK "Guc plani zaten 'High Performance'"
+        if ($CurrentPlan -match $UltimatePerfGUID) {
+            Write-OK "Guc plani zaten 'Nihai Performans (Ultimate Performance)'"
             return
         }
-        # High Performance planini etkinlestir
-        $result = powercfg /setactive $HighPerfGUID 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-OK "Guc plani 'High Performance' olarak ayarlandi"
-        } else {
-            # Plan bulunamazsa olustur ve etkinlestir
-            Write-Info "High Performance plani bulunamadi, olusturuluyor..."
-            $dupResult = powercfg /duplicatescheme $HighPerfGUID 2>&1
-            if ($dupResult -match '([a-f0-9-]{36})') {
-                powercfg /setactive $Matches[1] 2>&1 | Out-Null
-                Write-OK "Guc plani 'High Performance' olarak olusturuldu ve ayarlandi"
-            } else {
-                Write-Warn "High Performance plani olusturulamadi"
+
+        # Mevcut planlarda Ultimate Performance var mi?
+        $existingPlans = powercfg /list 2>&1
+        $planExists = $false
+        $activateGuid = $UltimatePerfGUID
+
+        foreach ($line in $existingPlans) {
+            if ($line -match $UltimatePerfGUID) {
+                $planExists = $true
+                break
             }
+            if ($line -match 'Nihai Performans|Ultimate Performance') {
+                if ($line -match '([a-f0-9-]{36})') {
+                    $planExists = $true
+                    $activateGuid = $Matches[1]
+                    break
+                }
+            }
+        }
+
+        if ($IsWin11) {
+            Write-Info "Windows 11 tespit edildi (Build: $OSBuild)"
+            # Windows 11: Modern Standby guc planlarini gizleyebilir
+            $csEnabled = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "CsEnabled" -ErrorAction SilentlyContinue
+            if ($csEnabled -and $csEnabled.CsEnabled -eq 1) {
+                Write-Info "Modern Standby aktif, guc planlari icin override ekleniyor..."
+                Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "PlatformAoAcOverride" -Value 0 -Type DWord -Force
+                Write-Info "PlatformAoAcOverride registry ayari eklendi (yeniden baslatmada etkili olur)"
+            }
+        } else {
+            Write-Info "Windows 10 tespit edildi (Build: $OSBuild)"
+        }
+
+        if (-not $planExists) {
+            Write-Info "Nihai Performans plani sisteme ekleniyor..."
+            $dupResult = powercfg /duplicatescheme $UltimatePerfGUID 2>&1
+            if ($dupResult -match '([a-f0-9-]{36})') {
+                $activateGuid = $Matches[1]
+                Write-OK "Nihai Performans plani olusturuldu (GUID: $activateGuid)"
+            } else {
+                Write-Warn "Nihai Performans plani olusturulamadi: $dupResult"
+                # Fallback: High Performance
+                Write-Info "Alternatif olarak Yuksek Performans plani deneniyor..."
+                $HighPerfGUID = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+                $fbResult = powercfg /setactive $HighPerfGUID 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-OK "Guc plani 'Yuksek Performans (High Performance)' olarak ayarlandi (fallback)"
+                } else {
+                    Write-Warn "Hicbir performans plani ayarlanamadi"
+                }
+                return
+            }
+        }
+
+        # Plani etkinlestir
+        $result = powercfg /setactive $activateGuid 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "Guc plani 'Nihai Performans (Ultimate Performance)' olarak ayarlandi"
+        } else {
+            Write-Warn "Guc plani etkinlestirilemedi: $result"
         }
     } catch {
         Write-Warn "Guc plani ayarlanamadi: $($_.Exception.Message)"
@@ -936,7 +986,7 @@ function Show-InstallGUI {
 
     # Power Plan Checkbox
     $chkPowerPlan = New-Object System.Windows.Forms.CheckBox
-    $chkPowerPlan.Text = "Guc Planini Yuksek Performans Yap"
+    $chkPowerPlan.Text = "Guc Planini Nihai Performans (Ultimate) Yap"
     $chkPowerPlan.Checked = $true
     $chkPowerPlan.Location = New-Object System.Drawing.Point(15, 152)
     $chkPowerPlan.AutoSize = $true
@@ -2159,7 +2209,7 @@ function Main {
         }
         if ($Selections.ApplySectorFix) { Write-Host "  |  [+] Disk Sektor Boyutu Fix (4KB)      |" -ForegroundColor Yellow }
         if ($Selections.InstallFirewall) { Write-Host "  |  [+] Firewall Kurallari (1433/1434)    |" -ForegroundColor Green }
-        if ($Selections.SetPowerPlan)    { Write-Host "  |  [+] Guc Plani: Yuksek Performans      |" -ForegroundColor Green }
+        if ($Selections.SetPowerPlan)    { Write-Host "  |  [+] Guc Plani: Nihai Performans       |" -ForegroundColor Green }
         Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
         Write-Host ""
 
@@ -2255,7 +2305,7 @@ function Main {
 
         # 7. Power Plan
         if ($Selections.SetPowerPlan) {
-            Set-HighPerformancePowerPlan
+            Set-UltimatePerformancePowerPlan
         }
 
         # Temizlik
