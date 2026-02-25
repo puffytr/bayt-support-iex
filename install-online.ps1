@@ -9,6 +9,43 @@
 #   iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 # ============================================================================
 
+param(
+    [switch]$Silent,
+    [switch]$InstallVCPP,
+    [switch]$InstallNet35,
+    [switch]$InstallNet481,
+    [switch]$InstallSQL,
+    [switch]$InstallFirewall,
+    [switch]$SetPowerPlan,
+    [string]$SqlVersion = "",
+    [string]$InstanceName = "",
+    [string]$SAPass = "",
+    [switch]$Help
+)
+
+if ($Help) {
+    Write-Host ""
+    Write-Host "Bayt Support Otomatik Kurulum - Unattended Mod" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Parametreler:" -ForegroundColor Yellow
+    Write-Host "  -Silent            Sessiz kurulum (GUI gosterme)"
+    Write-Host "  -InstallVCPP       Visual C++ Runtimes kur"
+    Write-Host "  -InstallNet35      .NET Framework 3.5 etkinlestir"
+    Write-Host "  -InstallNet481     .NET Framework 4.8.1 kur"
+    Write-Host "  -InstallSQL        SQL Server Express kur"
+    Write-Host "  -InstallFirewall   Firewall kurallari olustur"
+    Write-Host "  -SetPowerPlan      Guc planini High Performance yap"
+    Write-Host "  -SqlVersion        SQL versiyonu (2017/2019/2022/2025)"
+    Write-Host "  -InstanceName      SQL instance adi"
+    Write-Host "  -SAPass            SA sifresi"
+    Write-Host "  -Help              Bu yardim mesajini goster"
+    Write-Host ""
+    Write-Host "Ornek:" -ForegroundColor Yellow
+    Write-Host "  .\install-online.ps1 -Silent -InstallVCPP -InstallSQL -SqlVersion 2022 -InstanceName BaytSQL -SAPass 'Guclu_S1fre!'" -ForegroundColor Gray
+    Write-Host ""
+    return
+}
+
 $ErrorActionPreference = "Stop"
 
 # TLS 1.2/1.3 zorunlu (Microsoft download servisleri icin)
@@ -19,7 +56,7 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 #region YAPILANDIRMA
 # ============================================================================
 $Script:SAPassword       = "Bay_T252!"
-$Script:ScriptVersion    = "3.1"
+$Script:ScriptVersion    = "4.0"
 $Script:TempBase         = "$env:TEMP\BaytSqlInstall"
 $Script:ScriptUrl        = "https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1"
 
@@ -292,11 +329,37 @@ function Download-FileWithRetry {
                     Start-BitsTransfer -Source $Url -Destination $OutputPath -DisplayName $Description -ErrorAction Stop
                 }
                 catch {
-                    # BITS basarisiz olursa WebClient kullan
+                    # BITS basarisiz olursa WebClient ile ilerleme gostererek indir
+                    Write-Info "BITS basarisiz, WebClient ile indiriliyor..."
                     $wc = New-Object System.Net.WebClient
                     $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                    $wc.DownloadFile($Url, $OutputPath)
+
+                    $Script:DlProgress = @{ Pct = 0; Done = $false; Err = $null }
+                    $evtProg = Register-ObjectEvent $wc DownloadProgressChanged -Action {
+                        $Script:DlProgress.Pct = $EventArgs.ProgressPercentage
+                    }
+                    $evtDone = Register-ObjectEvent $wc DownloadFileCompleted -Action {
+                        $Script:DlProgress.Done = $true
+                        if ($EventArgs.Error) { $Script:DlProgress.Err = $EventArgs.Error }
+                    }
+
+                    $wc.DownloadFileAsync([System.Uri]$Url, $OutputPath)
+
+                    $lastPct = -1
+                    while (-not $Script:DlProgress.Done) {
+                        if ($Script:DlProgress.Pct -ne $lastPct -and $Script:DlProgress.Pct -gt 0) {
+                            Write-Host ("`r   [i]  Indiriliyor: %{0,-3} " -f $Script:DlProgress.Pct) -ForegroundColor Cyan -NoNewline
+                            $lastPct = $Script:DlProgress.Pct
+                        }
+                        Start-Sleep -Milliseconds 250
+                    }
+                    Write-Host ""
+
+                    Unregister-Event -SubscriptionId $evtProg.Id -ErrorAction SilentlyContinue
+                    Unregister-Event -SubscriptionId $evtDone.Id -ErrorAction SilentlyContinue
                     $wc.Dispose()
+
+                    if ($Script:DlProgress.Err) { throw $Script:DlProgress.Err.ToString() }
                 }
 
                 if ((Test-Path $OutputPath) -and (Get-Item $OutputPath).Length -gt 1MB) {
@@ -476,6 +539,59 @@ function Set-ForcedPhysicalSectorSize {
         return $false
     }
 }
+
+function Test-ScriptUpdate {
+    Write-Info "Guncelleme kontrolu yapiliyor..."
+    try {
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        $RemoteContent = $wc.DownloadString($Script:ScriptUrl)
+        $wc.Dispose()
+        if ($RemoteContent -match '\$Script:ScriptVersion\s*=\s*"([^"]+)"') {
+            $RemoteVer = $Matches[1]
+            if ($RemoteVer -ne $Script:ScriptVersion) {
+                Write-Warn "Yeni versiyon mevcut: v$RemoteVer (mevcut: v$($Script:ScriptVersion))"
+                Write-Info "Guncellemek icin: iex (irm '$($Script:ScriptUrl)')"
+                return @{ UpdateAvailable = $true; RemoteVersion = $RemoteVer }
+            } else {
+                Write-OK "Script guncel (v$($Script:ScriptVersion))"
+            }
+        }
+    } catch {
+        Write-Info "Guncelleme kontrolu yapilamadi (internet erisimi yok olabilir)"
+    }
+    return @{ UpdateAvailable = $false; RemoteVersion = $Script:ScriptVersion }
+}
+
+function Set-HighPerformancePowerPlan {
+    Write-Step "Guc plani ayarlaniyor..."
+    try {
+        # High Performance GUID - Windows built-in
+        $HighPerfGUID = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+        $CurrentPlan = powercfg /getactivescheme 2>&1
+        if ($CurrentPlan -match $HighPerfGUID) {
+            Write-OK "Guc plani zaten 'High Performance'"
+            return
+        }
+        # High Performance planini etkinlestir
+        $result = powercfg /setactive $HighPerfGUID 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "Guc plani 'High Performance' olarak ayarlandi"
+        } else {
+            # Plan bulunamazsa olustur ve etkinlestir
+            Write-Info "High Performance plani bulunamadi, olusturuluyor..."
+            $dupResult = powercfg /duplicatescheme $HighPerfGUID 2>&1
+            if ($dupResult -match '([a-f0-9-]{36})') {
+                powercfg /setactive $Matches[1] 2>&1 | Out-Null
+                Write-OK "Guc plani 'High Performance' olarak olusturuldu ve ayarlandi"
+            } else {
+                Write-Warn "High Performance plani olusturulamadi"
+            }
+        }
+    } catch {
+        Write-Warn "Guc plani ayarlanamadi: $($_.Exception.Message)"
+    }
+}
 #endregion
 
 # ============================================================================
@@ -622,14 +738,29 @@ function Enable-DotNetFrameworks {
     if ($InstallNet35) {
     # --- .NET Framework 3.5 ---
     Write-Info ".NET Framework 3.5 kontrol ediliyor..."
+    # Windows Server kontrolu
+    $IsServer = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).ProductType -ne 1
     try {
         $NetFx3 = Get-WindowsOptionalFeature -Online -FeatureName "NetFx3" -ErrorAction SilentlyContinue
         if ($NetFx3 -and $NetFx3.State -eq "Enabled") {
             Write-OK ".NET Framework 3.5 zaten etkin"
         } else {
-            Write-Info ".NET Framework 3.5 etkinlestiriliyor (Windows Update'ten indirilecek)..."
-            Enable-WindowsOptionalFeature -Online -FeatureName "NetFx3" -All -NoRestart -ErrorAction Stop | Out-Null
-            Write-OK ".NET Framework 3.5 etkinlestirildi"
+            if ($IsServer) {
+                Write-Info ".NET Framework 3.5 etkinlestiriliyor (Windows Server)..."
+                try {
+                    Import-Module ServerManager -ErrorAction SilentlyContinue
+                    Install-WindowsFeature -Name NET-Framework-Core -ErrorAction Stop | Out-Null
+                    Write-OK ".NET Framework 3.5 etkinlestirildi (Install-WindowsFeature)"
+                } catch {
+                    Write-Info "Install-WindowsFeature basarisiz, alternatif deneniyor..."
+                    Enable-WindowsOptionalFeature -Online -FeatureName "NetFx3" -All -NoRestart -ErrorAction Stop | Out-Null
+                    Write-OK ".NET Framework 3.5 etkinlestirildi (DISM)"
+                }
+            } else {
+                Write-Info ".NET Framework 3.5 etkinlestiriliyor (Windows Update'ten indirilecek)..."
+                Enable-WindowsOptionalFeature -Online -FeatureName "NetFx3" -All -NoRestart -ErrorAction Stop | Out-Null
+                Write-OK ".NET Framework 3.5 etkinlestirildi"
+            }
         }
     } catch {
         Write-Warn ".NET 3.5 etkinlestirilemedi: $($_.Exception.Message)"
@@ -740,7 +871,7 @@ function Show-InstallGUI {
     $grpComp = New-Object System.Windows.Forms.GroupBox
     $grpComp.Text = "Kurulacak Bilesenler"
     $grpComp.Location = New-Object System.Drawing.Point(15, $y)
-    $grpComp.Size = New-Object System.Drawing.Size(495, 160)
+    $grpComp.Size = New-Object System.Drawing.Size(495, 182)
     $grpComp.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
     $form.Controls.Add($grpComp)
 
@@ -803,10 +934,19 @@ function Show-InstallGUI {
     $chkSQL.ForeColor = [System.Drawing.Color]::FromArgb(0, 100, 200)
     $grpComp.Controls.Add($chkSQL)
 
-    $y += 170
+    # Power Plan Checkbox
+    $chkPowerPlan = New-Object System.Windows.Forms.CheckBox
+    $chkPowerPlan.Text = "Guc Planini Yuksek Performans Yap"
+    $chkPowerPlan.Checked = $true
+    $chkPowerPlan.Location = New-Object System.Drawing.Point(15, 152)
+    $chkPowerPlan.AutoSize = $true
+    $chkPowerPlan.Font = $normalFont
+    $grpComp.Controls.Add($chkPowerPlan)
+
+    $y += 192
 
     # --- SQL Ayarlari GroupBox ---
-    $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 180 } else { 145 }
+    $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 215 } else { 178 }
     $grpSql = New-Object System.Windows.Forms.GroupBox
     $grpSql.Text = "SQL Server Ayarlari (SQL secildiginde aktif olur)"
     $grpSql.Location = New-Object System.Drawing.Point(15, $y)
@@ -869,12 +1009,21 @@ function Show-InstallGUI {
     $txtPassword.Font = $normalFont
     $grpSql.Controls.Add($txtPassword)
 
+    # Firewall checkbox
+    $chkFirewall = New-Object System.Windows.Forms.CheckBox
+    $chkFirewall.Text = "Firewall Kurallari Olustur (TCP 1433 / UDP 1434)"
+    $chkFirewall.Checked = $true
+    $chkFirewall.Location = New-Object System.Drawing.Point(15, 135)
+    $chkFirewall.AutoSize = $true
+    $chkFirewall.Font = $normalFont
+    $grpSql.Controls.Add($chkFirewall)
+
     # Mevcut SQL Instance bilgisi goster
     if ($ExistingSqlNames.Count -gt 0) {
         $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) ($($_.Status))" }) -join ", "
         $lblExistSql = New-Object System.Windows.Forms.Label
         $lblExistSql.Text = "Mevcut instance: $sqlInstStr"
-        $lblExistSql.Location = New-Object System.Drawing.Point(15, 135)
+        $lblExistSql.Location = New-Object System.Drawing.Point(15, 168)
         $lblExistSql.Size = New-Object System.Drawing.Size(470, 35)
         $lblExistSql.Font = $smallFont
         $lblExistSql.ForeColor = [System.Drawing.Color]::OrangeRed
@@ -887,6 +1036,141 @@ function Show-InstallGUI {
     })
 
     $y += ($grpSqlHeight + 10)
+
+    # --- Mevcut Instance Yonetimi ---
+    if ($ExistingSqlNames.Count -gt 0) {
+        $grpMgmt = New-Object System.Windows.Forms.GroupBox
+        $grpMgmt.Text = "Mevcut Instance Yonetimi"
+        $grpMgmt.Location = New-Object System.Drawing.Point(15, $y)
+        $grpMgmt.Size = New-Object System.Drawing.Size(495, 72)
+        $grpMgmt.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
+        $form.Controls.Add($grpMgmt)
+
+        $cmbMgmtInst = New-Object System.Windows.Forms.ComboBox
+        $cmbMgmtInst.DropDownStyle = "DropDownList"
+        $cmbMgmtInst.Location = New-Object System.Drawing.Point(12, 24)
+        $cmbMgmtInst.Size = New-Object System.Drawing.Size(200, 25)
+        $cmbMgmtInst.Font = $normalFont
+        foreach ($inst in $ExistingSql) {
+            $cmbMgmtInst.Items.Add("$($inst.Name) ($($inst.Status))")
+        }
+        if ($cmbMgmtInst.Items.Count -gt 0) { $cmbMgmtInst.SelectedIndex = 0 }
+        $grpMgmt.Controls.Add($cmbMgmtInst)
+
+        $btnSvcStart = New-Object System.Windows.Forms.Button
+        $btnSvcStart.Text = "Baslat"
+        $btnSvcStart.Location = New-Object System.Drawing.Point(220, 23)
+        $btnSvcStart.Size = New-Object System.Drawing.Size(78, 28)
+        $btnSvcStart.FlatStyle = "Flat"
+        $btnSvcStart.BackColor = [System.Drawing.Color]::FromArgb(40, 167, 69)
+        $btnSvcStart.ForeColor = [System.Drawing.Color]::White
+        $btnSvcStart.Font = $smallFont
+        $btnSvcStart.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $grpMgmt.Controls.Add($btnSvcStart)
+
+        $btnSvcStop = New-Object System.Windows.Forms.Button
+        $btnSvcStop.Text = "Durdur"
+        $btnSvcStop.Location = New-Object System.Drawing.Point(303, 23)
+        $btnSvcStop.Size = New-Object System.Drawing.Size(78, 28)
+        $btnSvcStop.FlatStyle = "Flat"
+        $btnSvcStop.BackColor = [System.Drawing.Color]::FromArgb(220, 53, 69)
+        $btnSvcStop.ForeColor = [System.Drawing.Color]::White
+        $btnSvcStop.Font = $smallFont
+        $btnSvcStop.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $grpMgmt.Controls.Add($btnSvcStop)
+
+        $btnSvcRestart = New-Object System.Windows.Forms.Button
+        $btnSvcRestart.Text = "Yen. Baslat"
+        $btnSvcRestart.Location = New-Object System.Drawing.Point(386, 23)
+        $btnSvcRestart.Size = New-Object System.Drawing.Size(100, 28)
+        $btnSvcRestart.FlatStyle = "Flat"
+        $btnSvcRestart.BackColor = [System.Drawing.Color]::FromArgb(255, 193, 7)
+        $btnSvcRestart.ForeColor = [System.Drawing.Color]::Black
+        $btnSvcRestart.Font = $smallFont
+        $btnSvcRestart.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $grpMgmt.Controls.Add($btnSvcRestart)
+
+        $lblMgmtResult = New-Object System.Windows.Forms.Label
+        $lblMgmtResult.Text = ""
+        $lblMgmtResult.Location = New-Object System.Drawing.Point(12, 54)
+        $lblMgmtResult.Size = New-Object System.Drawing.Size(470, 16)
+        $lblMgmtResult.Font = $smallFont
+        $grpMgmt.Controls.Add($lblMgmtResult)
+
+        # Servis adi yardimci fonksiyonu
+        $GetInstSvcName = {
+            param($Name)
+            if ($Name -eq "MSSQLSERVER") { "MSSQLSERVER" } else { "MSSQL`$$Name" }
+        }
+
+        $RefreshMgmtCombo = {
+            $idx = $cmbMgmtInst.SelectedIndex
+            if ($idx -lt 0) { return }
+            $iName = ($cmbMgmtInst.SelectedItem -split ' \(')[0]
+            $sName = & $GetInstSvcName $iName
+            $svc = Get-Service $sName -ErrorAction SilentlyContinue
+            if ($svc) { $cmbMgmtInst.Items[$idx] = "$iName ($($svc.Status))" }
+        }
+
+        $btnSvcStart.Add_Click({
+            if ($cmbMgmtInst.SelectedIndex -lt 0) { return }
+            $iName = ($cmbMgmtInst.SelectedItem -split ' \(')[0]
+            $sName = & $GetInstSvcName $iName
+            try {
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::Gray
+                $lblMgmtResult.Text = "$iName baslatiliyor..."
+                [System.Windows.Forms.Application]::DoEvents()
+                Start-Service $sName -ErrorAction Stop
+                Start-Sleep -Milliseconds 500
+                & $RefreshMgmtCombo
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::Green
+                $lblMgmtResult.Text = "$iName baslatildi."
+            } catch {
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::Red
+                $lblMgmtResult.Text = "Hata: $($_.Exception.Message)"
+            }
+        })
+
+        $btnSvcStop.Add_Click({
+            if ($cmbMgmtInst.SelectedIndex -lt 0) { return }
+            $iName = ($cmbMgmtInst.SelectedItem -split ' \(')[0]
+            $sName = & $GetInstSvcName $iName
+            try {
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::Gray
+                $lblMgmtResult.Text = "$iName durduruluyor..."
+                [System.Windows.Forms.Application]::DoEvents()
+                Stop-Service $sName -Force -ErrorAction Stop
+                Start-Sleep -Milliseconds 500
+                & $RefreshMgmtCombo
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::OrangeRed
+                $lblMgmtResult.Text = "$iName durduruldu."
+            } catch {
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::Red
+                $lblMgmtResult.Text = "Hata: $($_.Exception.Message)"
+            }
+        })
+
+        $btnSvcRestart.Add_Click({
+            if ($cmbMgmtInst.SelectedIndex -lt 0) { return }
+            $iName = ($cmbMgmtInst.SelectedItem -split ' \(')[0]
+            $sName = & $GetInstSvcName $iName
+            try {
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::Gray
+                $lblMgmtResult.Text = "$iName yeniden baslatiliyor..."
+                [System.Windows.Forms.Application]::DoEvents()
+                Restart-Service $sName -Force -ErrorAction Stop
+                Start-Sleep -Milliseconds 500
+                & $RefreshMgmtCombo
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::Green
+                $lblMgmtResult.Text = "$iName yeniden baslatildi."
+            } catch {
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::Red
+                $lblMgmtResult.Text = "Hata: $($_.Exception.Message)"
+            }
+        })
+
+        $y += 82
+    }
 
     # --- Disk Sektor Uyarisi (4KB sorunu) ---
     if ($DiskSector.NeedsFix) {
@@ -979,7 +1263,7 @@ function Show-InstallGUI {
     $Script:GUIResult = $null
 
     $btnInstall.Add_Click({
-        if (-not $chkVCPP.Checked -and -not $chkNet35.Checked -and -not $chkNet481.Checked -and -not $chkSQL.Checked) {
+        if (-not $chkVCPP.Checked -and -not $chkNet35.Checked -and -not $chkNet481.Checked -and -not $chkSQL.Checked -and -not $chkPowerPlan.Checked) {
             [System.Windows.Forms.MessageBox]::Show(
                 "Lutfen en az bir bilesen secin!",
                 "Uyari",
@@ -1013,6 +1297,49 @@ function Show-InstallGUI {
             }
         }
 
+        # Instance adi validasyonu
+        if ($chkSQL.Checked) {
+            $instNameVal = $cmbInstance.Text.Trim()
+            if ($instNameVal.Length -gt 16) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Instance adi en fazla 16 karakter olabilir!`nGirilen: $($instNameVal.Length) karakter",
+                    "Gecersiz Instance Adi",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                )
+                return
+            }
+            if ($instNameVal -notmatch '^[A-Za-z][A-Za-z0-9_]*$') {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Instance adi gecersiz!`n`nKurallar:`n- Harf ile baslamali`n- Sadece harf, rakam ve alt cizgi (_) icerebilir`n- Bosluk ve ozel karakter kullanilamaz",
+                    "Gecersiz Instance Adi",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                )
+                return
+            }
+        }
+
+        # SA sifre karmasiklik kontrolu
+        if ($chkSQL.Checked) {
+            $pwd = $txtPassword.Text
+            $pwdErrors = @()
+            if ($pwd.Length -lt 8) { $pwdErrors += "- En az 8 karakter olmali" }
+            if ($pwd -cnotmatch '[A-Z]') { $pwdErrors += "- En az 1 buyuk harf icermeli (A-Z)" }
+            if ($pwd -cnotmatch '[a-z]') { $pwdErrors += "- En az 1 kucuk harf icermeli (a-z)" }
+            if ($pwd -notmatch '[0-9]') { $pwdErrors += "- En az 1 rakam icermeli (0-9)" }
+            if ($pwd -notmatch '[^A-Za-z0-9]') { $pwdErrors += "- En az 1 ozel karakter icermeli (!@#$%)" }
+            if ($pwdErrors.Count -gt 0) {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "SA sifresi SQL Server gereksinimlerini karsilamiyor:`n`n" + ($pwdErrors -join "`n") + "`n`nGuclu bir sifre girin.",
+                    "Zayif Sifre",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                )
+                return
+            }
+        }
+
         $versionMap = @{ 0 = "2019"; 1 = "2022"; 2 = "2017"; 3 = "2025" }
 
         # Disk sector fix secimi
@@ -1029,6 +1356,8 @@ function Show-InstallGUI {
             SqlVersion       = $versionMap[$cmbVersion.SelectedIndex]
             InstanceName     = $cmbInstance.Text.Trim().ToUpper()
             SAPassword       = $txtPassword.Text
+            InstallFirewall  = if ($chkSQL.Checked) { $chkFirewall.Checked } else { $false }
+            SetPowerPlan     = $chkPowerPlan.Checked
             ApplySectorFix   = $applySectorFix
             SectorNeedsFix   = $DiskSector.NeedsFix
             SectorFixApplied = $DiskSector.RegistryFixApplied
@@ -1461,6 +1790,80 @@ function Set-SqlBrowserService {
     }
 }
 
+function Set-SqlFirewallRules {
+    param([string]$InstanceName)
+    Write-Step "Windows Firewall kurallari olusturuluyor..."
+    $RulesCreated = 0
+
+    # TCP 1433 (SQL Server)
+    try {
+        $ruleName = "SQL Server ($InstanceName) - TCP 1433"
+        $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+        if (-not $existing) {
+            New-NetFirewallRule -DisplayName $ruleName `
+                -Direction Inbound -Protocol TCP -LocalPort 1433 `
+                -Action Allow -Profile Any -Enabled True `
+                -Description "SQL Server $InstanceName icin TCP 1433 portu - Bayt Support" `
+                -ErrorAction Stop | Out-Null
+            Write-OK "Firewall kurali olusturuldu: TCP 1433"
+            $RulesCreated++
+        } else {
+            Write-OK "Firewall kurali zaten mevcut: TCP 1433"
+        }
+    } catch {
+        Write-Warn "TCP 1433 firewall kurali olusturulamadi: $($_.Exception.Message)"
+    }
+
+    # UDP 1434 (SQL Browser)
+    try {
+        $ruleName = "SQL Server Browser - UDP 1434"
+        $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+        if (-not $existing) {
+            New-NetFirewallRule -DisplayName $ruleName `
+                -Direction Inbound -Protocol UDP -LocalPort 1434 `
+                -Action Allow -Profile Any -Enabled True `
+                -Description "SQL Server Browser servisi icin UDP 1434 - Bayt Support" `
+                -ErrorAction Stop | Out-Null
+            Write-OK "Firewall kurali olusturuldu: UDP 1434"
+            $RulesCreated++
+        } else {
+            Write-OK "Firewall kurali zaten mevcut: UDP 1434"
+        }
+    } catch {
+        Write-Warn "UDP 1434 firewall kurali olusturulamadi: $($_.Exception.Message)"
+    }
+
+    # SQL Server executable
+    try {
+        $SqlRegBase = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server"
+        $InstanceRegName = (Get-ItemProperty "$SqlRegBase\Instance Names\SQL" -ErrorAction SilentlyContinue).$InstanceName
+        if ($InstanceRegName) {
+            $SqlExePath = "$env:ProgramFiles\Microsoft SQL Server\$InstanceRegName\MSSQL\Binn\sqlservr.exe"
+            if (Test-Path $SqlExePath) {
+                $ruleName = "SQL Server ($InstanceName) - Program"
+                $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+                if (-not $existing) {
+                    New-NetFirewallRule -DisplayName $ruleName `
+                        -Direction Inbound -Program $SqlExePath `
+                        -Action Allow -Profile Any -Enabled True `
+                        -Description "SQL Server $InstanceName executable - Bayt Support" `
+                        -ErrorAction Stop | Out-Null
+                    Write-OK "Firewall kurali olusturuldu: sqlservr.exe"
+                    $RulesCreated++
+                }
+            }
+        }
+    } catch {
+        Write-Warn "SQL Server program firewall kurali olusturulamadi"
+    }
+
+    if ($RulesCreated -gt 0) {
+        Write-OK "Toplam $RulesCreated yeni firewall kurali olusturuldu"
+    } else {
+        Write-OK "Tum firewall kurallari zaten mevcut"
+    }
+}
+
 function Set-SqlPerformanceConfig {
     param(
         [string]$InstanceName,
@@ -1689,11 +2092,44 @@ function Show-Summary {
 # ============================================================================
 
 function Main {
+    # Log dosyasi baslat
+    $Script:LogFile = "$($Script:TempBase)\install-log-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+    New-Item -Path $Script:TempBase -ItemType Directory -Force | Out-Null
+    try { Start-Transcript -Path $Script:LogFile -Append | Out-Null } catch {}
+
     try {
         Write-Banner
+        Write-Info "Log dosyasi: $($Script:LogFile)"
 
-        # 1. GUI goster - kullanici bilesenleri secsin
-        $Selections = Show-InstallGUI
+        # Guncelleme kontrolu
+        Test-ScriptUpdate
+
+        # 1. GUI goster veya Unattended mod
+        if ($Silent) {
+            Write-Info "Sessiz kurulum modu aktif"
+            if (-not $InstallVCPP -and -not $InstallNet35 -and -not $InstallNet481 -and -not $InstallSQL -and -not $SetPowerPlan) {
+                Write-Err "Sessiz modda en az bir bilesen secilmelidir! -Help ile parametreleri gorun."
+                return
+            }
+            $DiskSectorInfo = Get-DiskSectorInfo
+            $Selections = @{
+                InstallVCPP      = $InstallVCPP.IsPresent
+                InstallNet35     = $InstallNet35.IsPresent
+                InstallNet481    = $InstallNet481.IsPresent
+                InstallSQL       = $InstallSQL.IsPresent
+                SqlVersion       = if ($SqlVersion) { $SqlVersion } else { "2019" }
+                InstanceName     = if ($InstanceName) { $InstanceName.ToUpper() } else { "BAYTTICARISQL" }
+                SAPassword       = if ($SAPass) { $SAPass } else { $Script:SAPassword }
+                InstallFirewall  = $InstallFirewall.IsPresent
+                SetPowerPlan     = $SetPowerPlan.IsPresent
+                ApplySectorFix   = $DiskSectorInfo.NeedsFix -and (-not $DiskSectorInfo.RegistryFixApplied)
+                SectorNeedsFix   = $DiskSectorInfo.NeedsFix
+                SectorFixApplied = $DiskSectorInfo.RegistryFixApplied
+                SectorSize       = $DiskSectorInfo.SectorSize
+            }
+        } else {
+            $Selections = Show-InstallGUI
+        }
 
         if (-not $Selections) {
             Write-Host ""
@@ -1720,6 +2156,8 @@ function Main {
             Write-Host $sqlLine -ForegroundColor Green
         }
         if ($Selections.ApplySectorFix) { Write-Host "  |  [+] Disk Sektor Boyutu Fix (4KB)      |" -ForegroundColor Yellow }
+        if ($Selections.InstallFirewall) { Write-Host "  |  [+] Firewall Kurallari (1433/1434)    |" -ForegroundColor Green }
+        if ($Selections.SetPowerPlan)    { Write-Host "  |  [+] Guc Plani: Yuksek Performans      |" -ForegroundColor Green }
         Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
         Write-Host ""
 
@@ -1786,6 +2224,12 @@ function Main {
                 $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
                 Set-SqlProtocols -InstanceName $SelectedInstance
                 Set-SqlBrowserService
+
+                # Firewall kurallari
+                if ($Selections.InstallFirewall) {
+                    Set-SqlFirewallRules -InstanceName $SelectedInstance
+                }
+
                 Restart-SqlService -InstanceName $SelectedInstance
                 $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
 
@@ -1805,6 +2249,11 @@ function Main {
             }
         } else {
             Write-Info "SQL Server kurulumu atlaniyor (secilmedi)"
+        }
+
+        # 7. Power Plan
+        if ($Selections.SetPowerPlan) {
+            Set-HighPerformancePowerPlan
         }
 
         # Temizlik
@@ -1827,8 +2276,15 @@ function Main {
         Write-Host ""
     }
     finally {
+        try { Stop-Transcript | Out-Null } catch {}
+        if ($Script:LogFile -and (Test-Path $Script:LogFile)) {
+            Write-Host ""
+            Write-Host "  Log dosyasi: $($Script:LogFile)" -ForegroundColor Gray
+        }
         Write-Host ""
-        Read-Host "Cikmak icin Enter tusuna basin"
+        if (-not $Silent) {
+            Read-Host "Cikmak icin Enter tusuna basin"
+        }
     }
 }
 
