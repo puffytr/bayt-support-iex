@@ -1,6 +1,6 @@
 # ============================================================================
 # Bayt Support Otomatik Kurulum Scripti (GUI / All-in-One / Web Ready)
-# Versiyon: 3.0
+# Versiyon: 4.0
 # Tarih: 2026
 # ============================================================================
 # Kullanim (tek komut):
@@ -2082,6 +2082,8 @@ function Show-Summary {
     Write-Host "    Pass  : $($Script:SAPassword)" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  ONEMLI: SA sifresini uretim ortaminda degistirin!" -ForegroundColor Yellow
+    Write-Host "  NOT: BaytTicariSQL/BaytBossSQL instance'lari icin sifre degisimi" -ForegroundColor DarkCyan
+    Write-Host "  gerekmez. Setup otomatik olarak sifreyi degistirir." -ForegroundColor DarkCyan
     Write-Host ""
     Write-Host "================================================================" -ForegroundColor Green
 }
