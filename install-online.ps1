@@ -1071,7 +1071,7 @@ function Show-InstallGUI {
     # Kurulu SQL instance isimlerini listele
     $ExistingSqlNames = @()
     if ($ExistingSql -and $ExistingSql.Count -gt 0) {
-        $ExistingSqlNames = @($ExistingSql | ForEach-Object { $_.Name.ToUpper() })
+        $ExistingSqlNames = @($ExistingSql | ForEach-Object { $_.Name.ToUpperInvariant() })
     }
 
     $form = New-Object System.Windows.Forms.Form
@@ -1178,7 +1178,7 @@ function Show-InstallGUI {
     $chkPowerPlan.Font = $normalFont
     $grpComp.Controls.Add($chkPowerPlan)
 
-    # Bay.T Uygulama Checkboxlar
+    # Bay.T Uygulama Checkboxlar (sadece 1 tanesi secilebilir)
     $chkCapital = New-Object System.Windows.Forms.CheckBox
     $chkCapital.Text = "Bay.T Capital Kurulumunu Indir ve Baslat"
     $chkCapital.Checked = $false
@@ -1196,6 +1196,14 @@ function Show-InstallGUI {
     $chkBoss.Font = $normalFont
     $chkBoss.ForeColor = [System.Drawing.Color]::FromArgb(180, 80, 0)
     $grpComp.Controls.Add($chkBoss)
+
+    # Karsilikli dislama: Capital isaretlenince Boss kalkar, Boss isaretlenince Capital kalkar
+    $chkCapital.Add_CheckedChanged({
+        if ($chkCapital.Checked) { $chkBoss.Checked = $false }
+    })
+    $chkBoss.Add_CheckedChanged({
+        if ($chkBoss.Checked) { $chkCapital.Checked = $false }
+    })
 
     $y += 232
 
@@ -1603,7 +1611,7 @@ function Show-InstallGUI {
 
         # Mevcut SQL instance ile cakisma kontrolu
         if ($chkSQL.Checked) {
-            $wantedName = $cmbInstance.Text.Trim().ToUpper()
+            $wantedName = $cmbInstance.Text.Trim().ToUpperInvariant()
             if ($ExistingSqlNames -contains $wantedName) {
                 $answer = [System.Windows.Forms.MessageBox]::Show(
                     "SQL Server instance '$wantedName' bu bilgisayarda zaten kurulu!`n`nAyni isimle kurulum yapilamaz. Farkli bir instance adi girin.",
@@ -1672,7 +1680,7 @@ function Show-InstallGUI {
             InstallNet481    = $chkNet481.Checked
             InstallSQL       = $chkSQL.Checked
             SqlVersion       = $versionMap[$cmbVersion.SelectedIndex]
-            InstanceName     = $cmbInstance.Text.Trim().ToUpper()
+            InstanceName     = $cmbInstance.Text.Trim().ToUpperInvariant()
             SAPassword       = $txtPassword.Text
             InstallFirewall  = if ($chkSQL.Checked) { $chkFirewall.Checked } else { $false }
             SetPowerPlan     = $chkPowerPlan.Checked
@@ -1920,7 +1928,7 @@ function Install-SqlServerEngine {
     $InstallArgs = [System.Collections.ArrayList]@(
         "/ACTION=Install",
         "/FEATURES=$($Info.Features)",
-        "/INSTANCENAME=$($InstanceName.ToUpper())",
+        "/INSTANCENAME=$($InstanceName.ToUpperInvariant())",
         "/INSTANCEDIR=`"$InstallPath`"",
         "/SQLSVCACCOUNT=`"NT AUTHORITY\SYSTEM`"",
         "/SQLSVCSTARTUPTYPE=Automatic",
@@ -2441,7 +2449,7 @@ function Main {
                 InstallNet481    = $InstallNet481.IsPresent
                 InstallSQL       = $InstallSQL.IsPresent
                 SqlVersion       = if ($SqlVersion) { $SqlVersion } else { "2019" }
-                InstanceName     = if ($InstanceName) { $InstanceName.ToUpper() } else { "BAYTTICARISQL" }
+                InstanceName     = if ($InstanceName) { $InstanceName.ToUpperInvariant() } else { "BAYTTICARISQL" }
                 SAPassword       = if ($SAPass) { $SAPass } else { $Script:SAPassword }
                 InstallFirewall  = $InstallFirewall.IsPresent
                 SetPowerPlan     = $SetPowerPlan.IsPresent
