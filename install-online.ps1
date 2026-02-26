@@ -423,6 +423,156 @@ function Get-InstalledSqlInstances {
     return $Instances
 }
 
+function Uninstall-SqlInstance {
+    param(
+        [Parameter(Mandatory)]
+        [string]$InstanceName
+    )
+
+    Write-Step "SQL Server instance '$InstanceName' kaldiriliyor..."
+
+    try {
+        # 1. Servis adi ve durumu
+        $ServiceName = if ($InstanceName -eq "MSSQLSERVER") { "MSSQLSERVER" } else { "MSSQL`$$InstanceName" }
+        $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -eq "Running") {
+            Write-Info "Servis durduruluyor: $ServiceName"
+            Stop-Service $ServiceName -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        }
+
+        # SQL Agent servisini de durdur
+        $agentSvc = if ($InstanceName -eq "MSSQLSERVER") { "SQLSERVERAGENT" } else { "SQLAgent`$$InstanceName" }
+        $agent = Get-Service -Name $agentSvc -ErrorAction SilentlyContinue
+        if ($agent -and $agent.Status -eq "Running") {
+            Write-Info "SQL Agent durduruluyor: $agentSvc"
+            Stop-Service $agentSvc -Force -ErrorAction SilentlyContinue
+        }
+
+        # SQL Browser servisini de durdur
+        $browser = Get-Service -Name "SQLBrowser" -ErrorAction SilentlyContinue
+        if ($browser -and $browser.Status -eq "Running") {
+            Write-Info "SQL Browser durduruluyor..."
+            Stop-Service "SQLBrowser" -Force -ErrorAction SilentlyContinue
+        }
+
+        # 2. Registry'den setup.exe yolunu bul
+        $regBase = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server"
+        $instReg = Get-ItemProperty "$regBase\Instance Names\SQL" -ErrorAction SilentlyContinue
+        $instId = $null
+        if ($instReg) {
+            $instId = $instReg.$InstanceName
+        }
+
+        if (-not $instId) {
+            Write-Err "Instance '$InstanceName' registry'de bulunamadi!"
+            return $false
+        }
+
+        # 3. Setup.exe yolunu bul
+        $setupInfo = Get-ItemProperty "$regBase\$instId\Setup" -ErrorAction SilentlyContinue
+        $setupPath = $null
+
+        if ($setupInfo -and $setupInfo.SqlProgramDir) {
+            $possibleSetup = Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\SQL2*\setup.exe"
+            $setupFiles = Get-ChildItem $possibleSetup -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
+            if ($setupFiles) {
+                $setupPath = $setupFiles[0].FullName
+            }
+        }
+
+        # Alternatif: Bootstrap klasorundan bul
+        if (-not $setupPath) {
+            $bootstrapPaths = @(
+                "$regBase\$instId\Setup\BootstrapDir"
+                "$regBase\$instId\Setup\SQLPath"
+            )
+            foreach ($bp in $bootstrapPaths) {
+                $val = (Get-ItemProperty -Path ($bp -replace '\\[^\\]+$','') -Name ($bp -split '\\')[-1] -ErrorAction SilentlyContinue)
+                if ($val) { break }
+            }
+
+            # Setup Bootstrap altinda ara
+            $commonPaths = @(
+                "C:\SQL2*\setup.exe",
+                "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\SQL*\setup.exe",
+                "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\setup.exe"
+            )
+            foreach ($cp in $commonPaths) {
+                $found = Get-ChildItem $cp -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                if ($found) {
+                    $setupPath = $found.FullName
+                    break
+                }
+            }
+        }
+
+        if (-not $setupPath -or -not (Test-Path $setupPath)) {
+            Write-Warn "Setup.exe bulunamadi. Alternatif yontem deneniyor..."
+
+            # Alternatif: Uninstall string'i kullan
+            $uninstReg = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+                Get-ItemProperty -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -match "SQL Server.*Database Engine" -and $_.DisplayName -match $InstanceName }
+
+            if (-not $uninstReg) {
+                $uninstReg = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+                    Get-ItemProperty -ErrorAction SilentlyContinue |
+                    Where-Object { $_.DisplayName -match "Microsoft SQL Server" -and $_.UninstallString -match $InstanceName }
+            }
+
+            if ($uninstReg) {
+                $uninstStr = ($uninstReg | Select-Object -First 1).UninstallString
+                Write-Info "Uninstall komutu bulundu: $uninstStr"
+                Write-Info "Kaldirma islemi baslatiliyor..."
+                $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $uninstStr /QS" -Wait -PassThru -ErrorAction Stop
+                if ($proc.ExitCode -eq 0) {
+                    Write-OK "SQL Server instance '$InstanceName' basariyla kaldirildi!"
+                    return $true
+                } else {
+                    Write-Err "Kaldirma islemi basarisiz oldu (Exit Code: $($proc.ExitCode))"
+                    return $false
+                }
+            }
+
+            Write-Err "Kaldirma yontemi bulunamadi. Lutfen Denetim Masasi'ndan manuel kaldirin."
+            return $false
+        }
+
+        # 4. Setup.exe ile kaldirma
+        Write-Info "Setup yolu: $setupPath"
+        Write-Info "Instance '$InstanceName' kaldiriliyor (bu islem birkac dakika surebilir)..."
+
+        $setupArgs = "/ACTION=Uninstall /INSTANCENAME=$InstanceName /FEATURES=SQLENGINE /QS"
+
+        $proc = Start-Process -FilePath $setupPath -ArgumentList $setupArgs -Wait -PassThru -ErrorAction Stop
+
+        if ($proc.ExitCode -eq 0) {
+            Write-OK "SQL Server instance '$InstanceName' basariyla kaldirildi!"
+
+            # Firewall kurallarini temizle
+            $fwRules = Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match $InstanceName }
+            if ($fwRules) {
+                foreach ($rule in $fwRules) {
+                    Remove-NetFirewallRule -Name $rule.Name -ErrorAction SilentlyContinue
+                    Write-Info "Firewall kurali kaldirildi: $($rule.DisplayName)"
+                }
+            }
+
+            return $true
+        } elseif ($proc.ExitCode -eq 3010) {
+            Write-OK "SQL Server instance '$InstanceName' kaldirildi (yeniden baslatma gerekiyor)"
+            return $true
+        } else {
+            Write-Err "Kaldirma islemi basarisiz oldu (Exit Code: $($proc.ExitCode))"
+            return $false
+        }
+    } catch {
+        Write-Err "SQL kaldirma hatasi: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 function Get-DotNetStatus {
     $Status = @{
         Net35Installed  = $false
@@ -1083,7 +1233,7 @@ function Show-InstallGUI {
     $grpSql.Controls.Add($lblInst)
 
     $cmbInstance = New-Object System.Windows.Forms.ComboBox
-    $cmbInstance.Items.AddRange(@("BaytTicariSQL", "BaytBossSQL", "Bayt", "SQLEXPRESS"))
+    $cmbInstance.Items.AddRange(@("BaytTicariSQL", "BaytBossSQL", "PERFECTUS", "Bayt", "SQLEXPRESS"))
     $cmbInstance.Text = "BaytTicariSQL"
     $cmbInstance.Location = New-Object System.Drawing.Point(115, 65)
     $cmbInstance.Size = New-Object System.Drawing.Size(290, 25)
@@ -1146,7 +1296,7 @@ function Show-InstallGUI {
         $grpMgmt = New-Object System.Windows.Forms.GroupBox
         $grpMgmt.Text = "Mevcut Instance Yonetimi"
         $grpMgmt.Location = New-Object System.Drawing.Point(15, $y)
-        $grpMgmt.Size = New-Object System.Drawing.Size(495, 72)
+        $grpMgmt.Size = New-Object System.Drawing.Size(495, 100)
         $grpMgmt.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
         $form.Controls.Add($grpMgmt)
 
@@ -1194,10 +1344,21 @@ function Show-InstallGUI {
         $btnSvcRestart.Cursor = [System.Windows.Forms.Cursors]::Hand
         $grpMgmt.Controls.Add($btnSvcRestart)
 
+        $btnSvcUninstall = New-Object System.Windows.Forms.Button
+        $btnSvcUninstall.Text = "SQL Kaldir"
+        $btnSvcUninstall.Location = New-Object System.Drawing.Point(12, 55)
+        $btnSvcUninstall.Size = New-Object System.Drawing.Size(200, 28)
+        $btnSvcUninstall.FlatStyle = "Flat"
+        $btnSvcUninstall.BackColor = [System.Drawing.Color]::FromArgb(139, 0, 0)
+        $btnSvcUninstall.ForeColor = [System.Drawing.Color]::White
+        $btnSvcUninstall.Font = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Bold)
+        $btnSvcUninstall.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $grpMgmt.Controls.Add($btnSvcUninstall)
+
         $lblMgmtResult = New-Object System.Windows.Forms.Label
         $lblMgmtResult.Text = ""
-        $lblMgmtResult.Location = New-Object System.Drawing.Point(12, 54)
-        $lblMgmtResult.Size = New-Object System.Drawing.Size(470, 16)
+        $lblMgmtResult.Location = New-Object System.Drawing.Point(220, 60)
+        $lblMgmtResult.Size = New-Object System.Drawing.Size(266, 16)
         $lblMgmtResult.Font = $smallFont
         $grpMgmt.Controls.Add($lblMgmtResult)
 
@@ -1273,7 +1434,60 @@ function Show-InstallGUI {
             }
         })
 
-        $y += 82
+        $btnSvcUninstall.Add_Click({
+            if ($cmbMgmtInst.SelectedIndex -lt 0) { return }
+            $iName = ($cmbMgmtInst.SelectedItem -split ' \(')[0]
+
+            $confirm = [System.Windows.Forms.MessageBox]::Show(
+                "'$iName' SQL Server instance'ini tamamen kaldirmak istediginize emin misiniz?`n`nBu islem geri alinamaz! Tum veritabanlari silinecektir.",
+                "SQL Server Kaldirma Onayi",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+
+            if ($confirm -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+            $confirm2 = [System.Windows.Forms.MessageBox]::Show(
+                "SON UYARI: '$iName' instance'i ve tum veritabanlari kalici olarak silinecek!`n`nDevam etmek istiyor musunuz?",
+                "Son Onay",
+                [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                [System.Windows.Forms.MessageBoxIcon]::Stop
+            )
+
+            if ($confirm2 -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+
+            $lblMgmtResult.ForeColor = [System.Drawing.Color]::Gray
+            $lblMgmtResult.Text = "$iName kaldiriliyor..."
+            [System.Windows.Forms.Application]::DoEvents()
+
+            $btnSvcUninstall.Enabled = $false
+            $btnSvcStart.Enabled = $false
+            $btnSvcStop.Enabled = $false
+            $btnSvcRestart.Enabled = $false
+
+            try {
+                $result = Uninstall-SqlInstance -InstanceName $iName
+                if ($result) {
+                    $lblMgmtResult.ForeColor = [System.Drawing.Color]::Green
+                    $lblMgmtResult.Text = "$iName basariyla kaldirildi!"
+                    $cmbMgmtInst.Items.RemoveAt($cmbMgmtInst.SelectedIndex)
+                    if ($cmbMgmtInst.Items.Count -gt 0) { $cmbMgmtInst.SelectedIndex = 0 }
+                } else {
+                    $lblMgmtResult.ForeColor = [System.Drawing.Color]::Red
+                    $lblMgmtResult.Text = "Kaldirma basarisiz oldu."
+                }
+            } catch {
+                $lblMgmtResult.ForeColor = [System.Drawing.Color]::Red
+                $lblMgmtResult.Text = "Hata: $($_.Exception.Message)"
+            } finally {
+                $btnSvcUninstall.Enabled = $true
+                $btnSvcStart.Enabled = $true
+                $btnSvcStop.Enabled = $true
+                $btnSvcRestart.Enabled = $true
+            }
+        })
+
+        $y += 110
     }
 
     # --- Disk Sektor Uyarisi (4KB sorunu) ---

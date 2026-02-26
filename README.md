@@ -55,6 +55,7 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 │                                                   │
 │  MEVCUT INSTANCE YONETIMI                         │
 │  [BaytBossSQL (Running)]  [Baslat] [Durdur]     │
+│  [SQL Kaldir]                                    │
 │                                                   │
 │  [  Kurulumu Baslat  ]  [  Iptal  ]              │
 └──────────────────────────────────────────────────┘
@@ -111,6 +112,10 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 ### Mevcut Instance Yonetimi
 - Kurulu SQL Server instance'larini GUI'de listeler
 - **Baslat / Durdur / Yeniden Baslat** butonlari ile servis yonetimi
+- **SQL Kaldir** butonu ile mevcut instance'i tamamen kaldirma
+- Kaldirma oncesi **2 asamali onay** ile yanlislikla silmeyi onler
+- Kaldirma sirasinda setup.exe, registry ve uninstall string yontemleri denenir
+- Kaldirma sonrasi ilgili firewall kurallari da temizlenir
 - Servis durumu anlik guncellenir
 
 ### Guc Plani (Power Plan)
