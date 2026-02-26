@@ -17,6 +17,8 @@ param(
     [switch]$InstallSQL,
     [switch]$InstallFirewall,
     [switch]$SetPowerPlan,
+    [switch]$InstallCapital,
+    [switch]$InstallBoss,
     [string]$SqlVersion = "",
     [string]$InstanceName = "",
     [string]$SAPass = "",
@@ -35,7 +37,9 @@ if ($Help) {
     Write-Host "  -InstallSQL        SQL Server Express kur"
     Write-Host "  -InstallFirewall   Firewall kurallari olustur"
     Write-Host "  -SetPowerPlan      Guc planini Nihai Performans (Ultimate) yap"
-    Write-Host "  -SqlVersion        SQL versiyonu (2017/2019/2022/2025)"
+    Write-Host "  -InstallCapital    Bay.T Capital kurulumunu indir ve baslat"
+    Write-Host "  -InstallBoss       Bay.T Boss kurulumunu indir ve baslat"
+    Write-Host "  -SqlVersion        SQL versiyonu (2019/2022/2025)"
     Write-Host "  -InstanceName      SQL instance adi"
     Write-Host "  -SAPass            SA sifresi"
     Write-Host "  -Help              Bu yardim mesajini goster"
@@ -64,19 +68,6 @@ $Script:ScriptUrl        = "https://raw.githubusercontent.com/puffytr/bayt-suppo
 # Type: "Direct" = dogrudan extract edilebilir installer (.exe /x: ile)
 # Type: "SSEI"   = SQL Server Express Setup Installer (once /ACTION=Download ile medya indirir)
 $Script:SqlDownloadInfo = @{
-    "2017" = @{
-        Type     = "SSEI"
-        Urls     = @(
-            "https://go.microsoft.com/fwlink/?linkid=853017",
-            "https://download.microsoft.com/download/5/E/C/5EC8BC35-4068-46D3-85AC-5F73ECCE3DDB/SQLServer2017-SSEI-Expr.exe"
-        )
-        Features             = "SQLENGINE"
-        SupportsInstantInit  = $true
-        SupportsTempDBParams = $true
-        MajorVersion         = 14
-        ExpressMaxMemoryMB   = 1410
-        ExpressMaxCores      = 4
-    }
     "2019" = @{
         Type     = "Direct"
         Urls     = @(
@@ -642,6 +633,50 @@ function Set-UltimatePerformancePowerPlan {
         Write-Warn "Guc plani ayarlanamadi: $($_.Exception.Message)"
     }
 }
+
+function Install-BaytApplication {
+    param(
+        [switch]$InstallCapital,
+        [switch]$InstallBoss
+    )
+
+    Write-Step "Bay.T uygulama kurulumu baslatiliyor..."
+
+    $apps = @()
+    if ($InstallCapital) {
+        $apps += @{ Name = "Bay.T Capital"; Url = "https://bay-t.com.tr/assets/download/Capital/CapitalSetup.exe"; File = "CapitalSetup.exe" }
+    }
+    if ($InstallBoss) {
+        $apps += @{ Name = "Bay.T Boss"; Url = "https://bay-t.com.tr/assets/download/BOSS/BossSetup.exe"; File = "BossSetup.exe" }
+    }
+
+    foreach ($app in $apps) {
+        $destPath = "$($Script:TempBase)\$($app.File)"
+        try {
+            Write-Info "$($app.Name) indiriliyor: $($app.Url)"
+
+            # Indirme islemi
+            $webClient = New-Object System.Net.WebClient
+            $webClient.Headers.Add("User-Agent", "BaytSupportInstaller/4.0")
+            $webClient.DownloadFile($app.Url, $destPath)
+
+            if (Test-Path $destPath) {
+                $fileSize = [math]::Round((Get-Item $destPath).Length / 1MB, 1)
+                Write-OK "$($app.Name) indirildi ($fileSize MB): $destPath"
+
+                Write-Info "$($app.Name) kurulumu baslatiliyor..."
+                Start-Process -FilePath $destPath
+                Write-OK "$($app.Name) kurulumu baslandi (setup penceresi acilacaktir)"
+            } else {
+                Write-Err "$($app.Name) indirilemedi!"
+            }
+        } catch {
+            Write-Err "$($app.Name) isleminde hata: $($_.Exception.Message)"
+        } finally {
+            if ($webClient) { $webClient.Dispose() }
+        }
+    }
+}
 #endregion
 
 # ============================================================================
@@ -921,7 +956,7 @@ function Show-InstallGUI {
     $grpComp = New-Object System.Windows.Forms.GroupBox
     $grpComp.Text = "Kurulacak Bilesenler"
     $grpComp.Location = New-Object System.Drawing.Point(15, $y)
-    $grpComp.Size = New-Object System.Drawing.Size(495, 182)
+    $grpComp.Size = New-Object System.Drawing.Size(495, 222)
     $grpComp.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
     $form.Controls.Add($grpComp)
 
@@ -993,7 +1028,26 @@ function Show-InstallGUI {
     $chkPowerPlan.Font = $normalFont
     $grpComp.Controls.Add($chkPowerPlan)
 
-    $y += 192
+    # Bay.T Uygulama Checkboxlar
+    $chkCapital = New-Object System.Windows.Forms.CheckBox
+    $chkCapital.Text = "Bay.T Capital Kurulumunu Indir ve Baslat"
+    $chkCapital.Checked = $false
+    $chkCapital.Location = New-Object System.Drawing.Point(15, 182)
+    $chkCapital.AutoSize = $true
+    $chkCapital.Font = $normalFont
+    $chkCapital.ForeColor = [System.Drawing.Color]::FromArgb(180, 80, 0)
+    $grpComp.Controls.Add($chkCapital)
+
+    $chkBoss = New-Object System.Windows.Forms.CheckBox
+    $chkBoss.Text = "Bay.T Boss Kurulumunu Indir ve Baslat"
+    $chkBoss.Checked = $false
+    $chkBoss.Location = New-Object System.Drawing.Point(280, 182)
+    $chkBoss.AutoSize = $true
+    $chkBoss.Font = $normalFont
+    $chkBoss.ForeColor = [System.Drawing.Color]::FromArgb(180, 80, 0)
+    $grpComp.Controls.Add($chkBoss)
+
+    $y += 232
 
     # --- SQL Ayarlari GroupBox ---
     $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 215 } else { 178 }
@@ -1013,7 +1067,7 @@ function Show-InstallGUI {
     $grpSql.Controls.Add($lblVer)
 
     $cmbVersion = New-Object System.Windows.Forms.ComboBox
-    $cmbVersion.Items.AddRange(@("SQL Server 2019 (Onerilen)", "SQL Server 2022", "SQL Server 2017", "SQL Server 2025"))
+    $cmbVersion.Items.AddRange(@("SQL Server 2019 (Onerilen)", "SQL Server 2022", "SQL Server 2025"))
     $cmbVersion.SelectedIndex = 0
     $cmbVersion.Location = New-Object System.Drawing.Point(115, 29)
     $cmbVersion.Size = New-Object System.Drawing.Size(290, 25)
@@ -1313,7 +1367,7 @@ function Show-InstallGUI {
     $Script:GUIResult = $null
 
     $btnInstall.Add_Click({
-        if (-not $chkVCPP.Checked -and -not $chkNet35.Checked -and -not $chkNet481.Checked -and -not $chkSQL.Checked -and -not $chkPowerPlan.Checked) {
+        if (-not $chkVCPP.Checked -and -not $chkNet35.Checked -and -not $chkNet481.Checked -and -not $chkSQL.Checked -and -not $chkPowerPlan.Checked -and -not $chkCapital.Checked -and -not $chkBoss.Checked) {
             [System.Windows.Forms.MessageBox]::Show(
                 "Lutfen en az bir bilesen secin!",
                 "Uyari",
@@ -1390,7 +1444,7 @@ function Show-InstallGUI {
             }
         }
 
-        $versionMap = @{ 0 = "2019"; 1 = "2022"; 2 = "2017"; 3 = "2025" }
+        $versionMap = @{ 0 = "2019"; 1 = "2022"; 2 = "2025" }
 
         # Disk sector fix secimi
         $applySectorFix = $false
@@ -1408,6 +1462,8 @@ function Show-InstallGUI {
             SAPassword       = $txtPassword.Text
             InstallFirewall  = if ($chkSQL.Checked) { $chkFirewall.Checked } else { $false }
             SetPowerPlan     = $chkPowerPlan.Checked
+            InstallCapital   = $chkCapital.Checked
+            InstallBoss      = $chkBoss.Checked
             ApplySectorFix   = $applySectorFix
             SectorNeedsFix   = $DiskSector.NeedsFix
             SectorFixApplied = $DiskSector.RegistryFixApplied
@@ -1667,12 +1723,12 @@ function Install-SqlServerEngine {
         "/INDICATEPROGRESS"
     )
 
-    # 2017+ : Instant File Initialization
+    # Instant File Initialization (2019+)
     if ($Info.SupportsInstantInit) {
         $InstallArgs.Add("/SQLSVCINSTANTFILEINIT=True") | Out-Null
     }
 
-    # 2017+ : TempDB optimizasyonu (setup sirasinda)
+    # TempDB optimizasyonu (2019+ setup'ta otomatik yapilir)
     if ($Info.SupportsTempDBParams) {
         $TempDBCount = [math]::Max(1, [math]::Min($LogicalCPUs, $Info.ExpressMaxCores))
         $InstallArgs.Add("/SQLTEMPDBFILECOUNT=$TempDBCount") | Out-Null
@@ -1970,7 +2026,8 @@ function Set-SqlPerformanceConfig {
 
     Write-OK "Performans ayarlari uyguland: $SuccessCount/$($ConfigCommands.Count) basarili"
 
-    # TempDB post-install optimizasyonu (sadece 2014 icin, 2017+ setup'ta yapildi)
+    # TempDB post-install optimizasyonu
+    # Sorgu basarili olduysa TempDB ayarlamasi yapilmis demektir
     if (-not $Info.SupportsTempDBParams) {
         Set-TempDBOptimization -ServerInstance $ServerInstance -LogicalCPUs $LogicalCPUs -MaxCores $Info.ExpressMaxCores
     }
@@ -2159,7 +2216,7 @@ function Main {
         # 1. GUI goster veya Unattended mod
         if ($Silent) {
             Write-Info "Sessiz kurulum modu aktif"
-            if (-not $InstallVCPP -and -not $InstallNet35 -and -not $InstallNet481 -and -not $InstallSQL -and -not $SetPowerPlan) {
+            if (-not $InstallVCPP -and -not $InstallNet35 -and -not $InstallNet481 -and -not $InstallSQL -and -not $SetPowerPlan -and -not $InstallCapital -and -not $InstallBoss) {
                 Write-Err "Sessiz modda en az bir bilesen secilmelidir! -Help ile parametreleri gorun."
                 return
             }
@@ -2174,6 +2231,8 @@ function Main {
                 SAPassword       = if ($SAPass) { $SAPass } else { $Script:SAPassword }
                 InstallFirewall  = $InstallFirewall.IsPresent
                 SetPowerPlan     = $SetPowerPlan.IsPresent
+                InstallCapital   = $InstallCapital.IsPresent
+                InstallBoss      = $InstallBoss.IsPresent
                 ApplySectorFix   = $DiskSectorInfo.NeedsFix -and (-not $DiskSectorInfo.RegistryFixApplied)
                 SectorNeedsFix   = $DiskSectorInfo.NeedsFix
                 SectorFixApplied = $DiskSectorInfo.RegistryFixApplied
@@ -2210,6 +2269,8 @@ function Main {
         if ($Selections.ApplySectorFix) { Write-Host "  |  [+] Disk Sektor Boyutu Fix (4KB)      |" -ForegroundColor Yellow }
         if ($Selections.InstallFirewall) { Write-Host "  |  [+] Firewall Kurallari (1433/1434)    |" -ForegroundColor Green }
         if ($Selections.SetPowerPlan)    { Write-Host "  |  [+] Guc Plani: Nihai Performans       |" -ForegroundColor Green }
+        if ($Selections.InstallCapital)  { Write-Host "  |  [+] Bay.T Capital Kurulumu            |" -ForegroundColor Yellow }
+        if ($Selections.InstallBoss)     { Write-Host "  |  [+] Bay.T Boss Kurulumu               |" -ForegroundColor Yellow }
         Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
         Write-Host ""
 
@@ -2306,6 +2367,11 @@ function Main {
         # 7. Power Plan
         if ($Selections.SetPowerPlan) {
             Set-UltimatePerformancePowerPlan
+        }
+
+        # 8. Bay.T Uygulama Kurulumu
+        if ($Selections.InstallCapital -or $Selections.InstallBoss) {
+            Install-BaytApplication -InstallCapital:$Selections.InstallCapital -InstallBoss:$Selections.InstallBoss
         }
 
         # Temizlik

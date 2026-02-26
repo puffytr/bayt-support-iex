@@ -9,6 +9,7 @@ Hangi bilesenleri kurmak istediginizi gorsel arayuzden secin:
 - **SQL Server Express** *(opsiyonel)*
 - **Firewall Kurallari** (TCP 1433 / UDP 1434)
 - **Guc Plani** (Nihai Performans / Ultimate Performance)
+- **Bay.T Uygulama Kurulumu** (Capital / Boss) *(opsiyonel)*
 - **NVMe Disk Sektor Fix** (Win11 4KB+ sorun tespiti)
 
 > SQL Server kurulumu **zorunlu degildir**. Sadece C++ ve .NET kurulumu icin de kullanabilirsiniz.
@@ -44,6 +45,7 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 │  [x] .NET Framework 4.8.1  [KURULU DEGIL]       │
 │  [ ] SQL Server Express Kurulumu                  │
 │  [x] Guc Planini Nihai Performans (Ultimate) Yap │
+│  [ ] Bay.T Capital Kurulumu   [ ] Bay.T Boss   │
 │                                                   │
 │  SQL SERVER AYARLARI (SQL secildiginde aktif)     │
 │  Versiyon:  [SQL Server 2019 (Onerilen)]         │
@@ -79,7 +81,7 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 - Her biri ayri ayri secilip devre disi birakilabilir
 
 ### SQL Server Express Kurulumu (Opsiyonel)
-- SQL Server 2017, 2019, 2022, 2025 versiyonlarini destekler
+- SQL Server 2019, 2022, 2025 versiyonlarini destekler
 - **Kurmak zorunda degilsiniz** — GUI'den isaretlemezseniz atlanir
 - **Instance adi validasyonu**: Max 16 karakter, harf ile baslama, ozel karakter kontrolu
 - **SA sifre karmasiklik kontrolu**: Buyuk/kucuk harf, rakam, ozel karakter zorunlu
@@ -92,7 +94,7 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
   - Otomatik RAM ve CPU optimizasyonu (Express limitleri dahilinde)
   - TempDB coklu dosya yapilandirmasi
   - Max Degree of Parallelism, Cost Threshold, Backup Compression
-  - Aninda dosya baslatma (Instant File Initialization, 2017+)
+  - Aninda dosya baslatma (Instant File Initialization, 2019+)
 
 ### Firewall Kurallari
 - SQL Server icin **TCP 1433** inbound kurali
@@ -118,6 +120,13 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 - Plan bulunamazsa otomatik olarak sisteme eklenir
 - Basarisiz olursa High Performance'a fallback yapar
 - SQL Server performansi icin onerilir
+
+### Bay.T Uygulama Kurulumu
+- **Bay.T Capital** ve **Bay.T Boss** kurulum dosyalarini indirir ve baslatir
+- Varsayilan olarak **kapali** gelir, istek uzerine isaretlenebilir
+- Capital: `https://bay-t.com.tr/assets/download/Capital/CapitalSetup.exe`
+- Boss: `https://bay-t.com.tr/assets/download/BOSS/BossSetup.exe`
+- Her iki uygulama bagimsiz olarak secilip kurulabilir
 
 ### Diger Ozellikler
 - **Log dosyasi**: Tum kurulum ciktisi `%TEMP%\BaytSqlInstall\install-log-{tarih}.txt` dosyasina kaydedilir
@@ -163,7 +172,9 @@ iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercont
 | `-InstallSQL` | SQL Server Express kur |
 | `-InstallFirewall` | Firewall kurallari olustur |
 | `-SetPowerPlan` | Guc planini Nihai Performans (Ultimate) yap |
-| `-SqlVersion` | SQL versiyonu: `2017`, `2019`, `2022`, `2025` |
+| `-InstallCapital` | Bay.T Capital kurulumunu indir ve baslat |
+| `-InstallBoss` | Bay.T Boss kurulumunu indir ve baslat |
+| `-SqlVersion` | SQL versiyonu: `2019`, `2022`, `2025` |
 | `-InstanceName` | SQL instance adi |
 | `-SAPass` | SA sifresi |
 | `-Help` | Yardim mesajini goster |
@@ -207,14 +218,14 @@ iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercont
 
 ## SQL Server Versiyon Farklari
 
-| Ozellik | 2017 | 2019 | 2022 | 2025 |
-|---------|------|------|------|------|
-| Indirme Yontemi | SSEI | Dogrudan | SSEI | SSEI |
-| Max RAM (Express) | 1.4 GB | 1.4 GB | 1.4 GB | 1.4 GB |
-| Max CPU (Express) | 4 core | 4 core | 4 core | 4 core |
-| TempDB Setup Param | Evet | Evet | Evet | Evet |
-| Instant File Init | Evet | Evet | Evet | Evet |
-| Backup Compression | Evet | Evet | Evet | Evet |
+| Ozellik | 2019 | 2022 | 2025 |
+|---------|------|------|------|
+| Indirme Yontemi | Dogrudan | SSEI | SSEI |
+| Max RAM (Express) | 1.4 GB | 1.4 GB | 1.4 GB |
+| Max CPU (Express) | 4 core | 4 core | 4 core |
+| TempDB Setup Param | Evet | Evet | Evet |
+| Instant File Init | Evet | Evet | Evet |
+| Backup Compression | Evet | Evet | Evet |
 
 ## Teknik Detaylar
 
