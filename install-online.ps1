@@ -1,6 +1,6 @@
 # ============================================================================
 # Bayt Support Otomatik Kurulum Scripti (GUI / All-in-One / Web Ready)
-# Versiyon: 4.0
+# Versiyon: 5.0
 # Tarih: 2026
 # ============================================================================
 # Kullanim (tek komut):
@@ -60,7 +60,7 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 #region YAPILANDIRMA
 # ============================================================================
 $Script:SAPassword       = "Bay_T252!"
-$Script:ScriptVersion    = "4.0"
+$Script:ScriptVersion    = "5.0"
 $Script:TempBase         = "$env:TEMP\BaytSqlInstall"
 $Script:ScriptUrl        = "https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1"
 

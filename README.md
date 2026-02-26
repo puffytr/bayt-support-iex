@@ -15,7 +15,7 @@ Hangi bilesenleri kurmak istediginizi gorsel arayuzden secin:
 > SQL Server kurulumu **zorunlu degildir**. Sadece C++ ve .NET kurulumu icin de kullanabilirsiniz.
 
 ![GUI](https://img.shields.io/badge/Aray%C3%BCz-Windows%20Forms%20GUI-blue?style=for-the-badge)
-![Version](https://img.shields.io/badge/Versiyon-4.0-green?style=for-the-badge)
+![Version](https://img.shields.io/badge/Versiyon-5.0-green?style=for-the-badge)
 
 ## Hizli Baslangic (Tek Komut)
 
@@ -36,7 +36,7 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  Bayt Support Otomatik Kurulum v4.0              │
+│  Bayt Support Otomatik Kurulum v5.0              │
 │  Kurmak istediginiz bilesenleri secin             │
 │                                                   │
 │  KURULACAK BILESENLER                             │
