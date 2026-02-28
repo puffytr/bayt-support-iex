@@ -89,7 +89,7 @@ $Script:SqlDownloadInfo = @{
     "2022" = @{
         Type     = "SSEI"
         Urls     = @(
-            "https://go.microsoft.com/fwlink/p/?linkid=2216019",
+            "https://download.microsoft.com/download/5/1/4/5145fe04-4d30-4b85-b0d1-39533663a2f1/SQL2022-SSEI-Expr.exe",
             "https://download.microsoft.com/download/3/8/d/38de7036-2433-4207-8eae-06e247e17b25/SQLServer2022-SSEI-Expr.exe"
         )
         Features             = "SQLENGINE"
