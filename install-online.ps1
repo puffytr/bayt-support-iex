@@ -3,6 +3,21 @@
 # Versiyon: 5.1
 # Tarih: 2026
 # ============================================================================
+#
+# SORUMLULUK REDDI (DISCLAIMER)
+# --------------------------------------------------------------------------
+# Bu script YALNIZCA test, gelistirme ve demo amaclidir.
+# Scriptte yer alan SA sifreleri, SQL Server product key'leri ve diger
+# kimlik bilgileri tamamen TEST/DEGERLENDIRME amacli ornek degerlerdir.
+# Uretim (production) ortaminda kullanilmasi TAVSIYE EDILMEZ.
+#
+# Kullanici bu scripti calistirarak asagidakileri kabul eder:
+#   - Tum sifreler ve anahtarlar kurulum sonrasi degistirilmelidir
+#   - Product key'ler Microsoft'un degerlendirme/test lisanslarina aittir
+#   - Script sahibi, lisans ihlalleri veya guvenlik aciklarindan sorumlu degildir
+#   - Uretim ortami icin Microsoft'tan uygun lisans satin alinmalidir
+#
+# ============================================================================
 # Kullanim (tek komut):
 #   iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
 # veya:
@@ -34,7 +49,7 @@ if ($Help) {
     Write-Host "  -InstallVCPP       Visual C++ Runtimes kur"
     Write-Host "  -InstallNet35      .NET Framework 3.5 etkinlestir"
     Write-Host "  -InstallNet481     .NET Framework 4.8.1 kur"
-    Write-Host "  -InstallSQL        SQL Server Express kur"
+    Write-Host "  -InstallSQL        SQL Server kur"
     Write-Host "  -InstallFirewall   Firewall kurallari olustur"
     Write-Host "  -SetPowerPlan      Guc planini Nihai Performans (Ultimate) yap"
     Write-Host "  -InstallCapital    Bay.T Capital kurulumunu indir ve baslat"
@@ -59,57 +74,93 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 # ============================================================================
 #region YAPILANDIRMA
 # ============================================================================
+# UYARI: Asagidaki SA sifresi YALNIZCA test/demo amaclidir.
+# Uretim ortaminda mutlaka degistirilmelidir!
 $Script:SAPassword       = "Bay_T252!"
-$Script:ScriptVersion    = "5.1"
+$Script:ScriptVersion    = "5.2"
 # Temp dizini: Kullanici adindaki Turkce karakterler sorun yaratabiliyor (8.3 path)
 # Bu yuzden kullanici profilinden bagimsiz C:\Bay-T\Support-IEX kullaniyoruz
 $Script:TempBase         = "C:\Bay-T\Support-IEX"
 $Script:ScriptUrl        = "https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1"
 
 # SQL Server indirme bilgileri
-# Type: "Direct" = dogrudan extract edilebilir installer (.exe /x: ile)
-# Type: "SSEI"   = SQL Server Express Setup Installer (once /ACTION=Download ile medya indirir)
+# Type: "SSEI" = SQL Server Setup Installer (once /ACTION=Download ile medya indirir)
+# UYARI: Product key'ler Microsoft'un kamuya acik degerlendirme/test anahtarlaridir.
+# Uretim ortami icin Microsoft'tan uygun lisans satin alinmalidir.
+# Standard edition icin Evaluation/Developer SSEI kullanilir, /PID ile Standard lisanslama yapilir
 $Script:SqlDownloadInfo = @{
-    "2019" = @{
-        Type     = "Direct"
+    # --- SQL Server 2019 ---
+    "2019-standard" = @{
+        Type     = "SSEI"
         Urls     = @(
-            "https://download.microsoft.com/download/7/c/1/7c14e92e-bdcb-4f89-b7cf-93543e7112d1/SQLEXPR_x64_ENU.exe"
+            "https://download.microsoft.com/download/d/a/2/da259851-b941-459d-989c-54a18a5d44dd/SQL2019-SSEI-Dev.exe",
+            "https://go.microsoft.com/fwlink/?linkid=866662"
         )
-        FallbackType = "SSEI"
-        FallbackUrls = @(
-            "https://go.microsoft.com/fwlink/?linkid=866658"
-        )
+        ProductKey           = "PMBDC-FXVM3-T777P-N4FY8-PKFF4"
         Features             = "SQLENGINE"
         SupportsInstantInit  = $true
         SupportsTempDBParams = $true
         MajorVersion         = 15
-        ExpressMaxMemoryMB   = 1410
-        ExpressMaxCores      = 4
     }
-    "2022" = @{
+    "2019-express" = @{
         Type     = "SSEI"
         Urls     = @(
-            "https://download.microsoft.com/download/5/1/4/5145fe04-4d30-4b85-b0d1-39533663a2f1/SQL2022-SSEI-Expr.exe",
-            "https://download.microsoft.com/download/3/8/d/38de7036-2433-4207-8eae-06e247e17b25/SQLServer2022-SSEI-Expr.exe"
+            "https://download.microsoft.com/download/7/f/8/7f8a9c43-8c8a-4f7c-9f92-83c18d96b681/SQL2019-SSEI-Expr.exe"
         )
+        ProductKey           = $null
+        Features             = "SQLENGINE"
+        SupportsInstantInit  = $true
+        SupportsTempDBParams = $true
+        MajorVersion         = 15
+    }
+    # --- SQL Server 2022 ---
+    "2022-standard" = @{
+        Type     = "SSEI"
+        Urls     = @(
+            "https://download.microsoft.com/download/c/c/9/cc9c6797-383c-4b24-8920-dc057c1de9d3/SQL2022-SSEI-Dev.exe",
+            "https://go.microsoft.com/fwlink/?linkid=2215158"
+        )
+        ProductKey           = "FG86G-CHH2T-CB7NJ-XT7D2-V8V4X"
         Features             = "SQLENGINE"
         SupportsInstantInit  = $true
         SupportsTempDBParams = $true
         MajorVersion         = 16
-        ExpressMaxMemoryMB   = 1410
-        ExpressMaxCores      = 4
     }
-    "2025" = @{
+    "2022-express" = @{
         Type     = "SSEI"
         Urls     = @(
-            "https://go.microsoft.com/fwlink/?linkid=2216019"
+            "https://download.microsoft.com/download/5/1/4/5145fe04-4d30-4b85-b0d1-39533663a2f1/SQL2022-SSEI-Expr.exe"
         )
+        ProductKey           = $null
+        Features             = "SQLENGINE"
+        SupportsInstantInit  = $true
+        SupportsTempDBParams = $true
+        MajorVersion         = 16
+    }
+    # --- SQL Server 2025 ---
+    "2025-standard" = @{
+        Type     = "SSEI"
+        Urls     = @(
+            "https://download.microsoft.com/download/4ba126fc-a6a0-4810-80e9-c0182d3e1f62/SQL2025-SSEI-EntDev.exe",
+            "https://aka.ms/sql2025developer"
+        )
+        ProductKey           = "YCNJQ-CB92J-CDT88-8T63K-QWBGQ"
         Features             = "SQLENGINE"
         SupportsInstantInit  = $true
         SupportsTempDBParams = $true
         MajorVersion         = 17
-        ExpressMaxMemoryMB   = 1410
-        ExpressMaxCores      = 4
+    }
+    "2025-express" = @{
+        Type     = "SSEI"
+        Urls     = @(
+            "https://download.microsoft.com/download/7ab8f535-7eb8-4b16-82eb-eca0fa2d38f3/SQL2025-SSEI-Expr.exe",
+            "https://aka.ms/sql2025express"
+        )
+        ProductKey           = $null
+        Features             = "SQLENGINE"
+        SupportsInstantInit  = $true
+        SupportsTempDBParams = $true
+        MajorVersion         = 17
     }
 }
 
@@ -173,7 +224,7 @@ function Write-Banner {
     Write-Host ""
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host "    Bayt Support Otomatik Kurulum v$($Script:ScriptVersion)" -ForegroundColor Cyan
-    Write-Host "    (VC++ Runtimes + .NET Framework + SQL Server Express)" -ForegroundColor Cyan
+    Write-Host "    (VC++ Runtimes + .NET Framework + SQL Server Standard)" -ForegroundColor Cyan
     Write-Host "================================================================" -ForegroundColor Cyan
     Write-Host ""
 }
@@ -413,11 +464,16 @@ function Get-InstalledSqlInstances {
                 Where-Object { $_.Name -notin @('PSPath','PSParentPath','PSChildName','PSDrive','PSProvider') } |
                 ForEach-Object {
                     $InstName = $_.Name
+                    $RegPath = $_.Value
                     $ServiceName = if ($InstName -eq "MSSQLSERVER") { "MSSQLSERVER" } else { "MSSQL`$$InstName" }
                     $Svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+                    # Edition bilgisini registry'den oku
+                    $SetupReg = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$RegPath\Setup" -ErrorAction SilentlyContinue
+                    $Edition = if ($SetupReg -and $SetupReg.Edition) { $SetupReg.Edition -replace ' Edition$','' } else { "Bilinmiyor" }
                     $Instances += @{
-                        Name = $InstName
-                        Status = if ($Svc) { $Svc.Status.ToString() } else { "Bilinmiyor" }
+                        Name    = $InstName
+                        Status  = if ($Svc) { $Svc.Status.ToString() } else { "Bilinmiyor" }
+                        Edition = $Edition
                     }
                 }
         }
@@ -530,6 +586,20 @@ function Uninstall-SqlInstance {
                 $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $uninstStr /QS" -Wait -PassThru -ErrorAction Stop
                 if ($proc.ExitCode -eq 0) {
                     Write-OK "SQL Server instance '$InstanceName' basariyla kaldirildi!"
+
+                    # Registry temizligi
+                    try {
+                        $regBasePath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server"
+                        $instNamesKey = Get-ItemProperty "$regBasePath\Instance Names\SQL" -ErrorAction SilentlyContinue
+                        if ($instNamesKey -and $instNamesKey.$InstanceName) {
+                            $instRegId = $instNamesKey.$InstanceName
+                            Remove-ItemProperty "$regBasePath\Instance Names\SQL" -Name $InstanceName -Force -ErrorAction SilentlyContinue
+                            if ($instRegId -and (Test-Path "$regBasePath\$instRegId")) {
+                                Remove-Item "$regBasePath\$instRegId" -Recurse -Force -ErrorAction SilentlyContinue
+                            }
+                        }
+                    } catch {}
+
                     return $true
                 } else {
                     Write-Err "Kaldirma islemi basarisiz oldu (Exit Code: $($proc.ExitCode))"
@@ -561,9 +631,40 @@ function Uninstall-SqlInstance {
                 }
             }
 
+            # Registry temizligi - ayni isimle tekrar kurulum yapilabilmesi icin
+            try {
+                $regBasePath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server"
+                $instNamesKey = Get-ItemProperty "$regBasePath\Instance Names\SQL" -ErrorAction SilentlyContinue
+                if ($instNamesKey -and $instNamesKey.$InstanceName) {
+                    $instRegId = $instNamesKey.$InstanceName
+                    Remove-ItemProperty "$regBasePath\Instance Names\SQL" -Name $InstanceName -Force -ErrorAction SilentlyContinue
+                    Write-Info "Registry instance girisi kaldirildi: $InstanceName"
+                    if ($instRegId -and (Test-Path "$regBasePath\$instRegId")) {
+                        Remove-Item "$regBasePath\$instRegId" -Recurse -Force -ErrorAction SilentlyContinue
+                        Write-Info "Registry alt anahtari kaldirildi: $instRegId"
+                    }
+                }
+            } catch {
+                Write-Warn "Registry temizligi sirasinda hata: $($_.Exception.Message)"
+            }
+
             return $true
         } elseif ($proc.ExitCode -eq 3010) {
             Write-OK "SQL Server instance '$InstanceName' kaldirildi (yeniden baslatma gerekiyor)"
+
+            # Registry temizligi
+            try {
+                $regBasePath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server"
+                $instNamesKey = Get-ItemProperty "$regBasePath\Instance Names\SQL" -ErrorAction SilentlyContinue
+                if ($instNamesKey -and $instNamesKey.$InstanceName) {
+                    $instRegId = $instNamesKey.$InstanceName
+                    Remove-ItemProperty "$regBasePath\Instance Names\SQL" -Name $InstanceName -Force -ErrorAction SilentlyContinue
+                    if ($instRegId -and (Test-Path "$regBasePath\$instRegId")) {
+                        Remove-Item "$regBasePath\$instRegId" -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            } catch {}
+
             return $true
         } else {
             Write-Err "Kaldirma islemi basarisiz oldu (Exit Code: $($proc.ExitCode))"
@@ -684,6 +785,12 @@ function Set-ForcedPhysicalSectorSize {
 }
 
 function Test-ScriptUpdate {
+    # Lokal/test ortaminda GitHub kontrolunu atla (XAMPP gelistirme makinesi tespiti)
+    if (Test-Path "C:\xampp\htdocs\bayt-support-iex\install-online.ps1") {
+        Write-Info "Lokal gelistirme ortami tespit edildi, guncelleme kontrolu atlaniyor."
+        return @{ UpdateAvailable = $false; RemoteVersion = $Script:ScriptVersion }
+    }
+
     Write-Info "Guncelleme kontrolu yapiliyor..."
     try {
         $wc = New-Object System.Net.WebClient
@@ -1070,10 +1177,10 @@ function Show-InstallGUI {
     }
     $AllVCInstalled = ($VCInstalledCount -eq $VCTotal)
 
-    # Kurulu SQL instance isimlerini listele
-    $ExistingSqlNames = @()
+    # Kurulu SQL instance isimlerini listele (ArrayList: GUI icerisinden guncellenebilir)
+    $ExistingSqlNames = [System.Collections.ArrayList]@()
     if ($ExistingSql -and $ExistingSql.Count -gt 0) {
-        $ExistingSqlNames = @($ExistingSql | ForEach-Object { $_.Name.ToUpperInvariant() })
+        foreach ($sqlInst in $ExistingSql) { $ExistingSqlNames.Add($sqlInst.Name.ToUpperInvariant()) | Out-Null }
     }
 
     $form = New-Object System.Windows.Forms.Form
@@ -1163,7 +1270,7 @@ function Show-InstallGUI {
 
     # SQL Checkbox
     $chkSQL = New-Object System.Windows.Forms.CheckBox
-    $chkSQL.Text = "SQL Server Express Kurulumu"
+    $chkSQL.Text = "SQL Server Standard Kurulumu"
     $chkSQL.Checked = $false
     $chkSQL.Location = New-Object System.Drawing.Point(15, 122)
     $chkSQL.AutoSize = $true
@@ -1227,7 +1334,14 @@ function Show-InstallGUI {
     $grpSql.Controls.Add($lblVer)
 
     $cmbVersion = New-Object System.Windows.Forms.ComboBox
-    $cmbVersion.Items.AddRange(@("SQL Server 2019 (Onerilen)", "SQL Server 2022", "SQL Server 2025"))
+    $cmbVersion.Items.AddRange(@(
+        "SQL Server 2019 Standard (Onerilen)",
+        "SQL Server 2019 Express",
+        "SQL Server 2022 Standard",
+        "SQL Server 2022 Express",
+        "SQL Server 2025 Standard",
+        "SQL Server 2025 Express"
+    ))
     $cmbVersion.SelectedIndex = 0
     $cmbVersion.Location = New-Object System.Drawing.Point(115, 29)
     $cmbVersion.Size = New-Object System.Drawing.Size(290, 25)
@@ -1243,7 +1357,7 @@ function Show-InstallGUI {
     $grpSql.Controls.Add($lblInst)
 
     $cmbInstance = New-Object System.Windows.Forms.ComboBox
-    $cmbInstance.Items.AddRange(@("BaytTicariSQL", "BaytBossSQL", "PERFECTUS", "Bayt", "SQLEXPRESS"))
+    $cmbInstance.Items.AddRange(@("BaytTicariSQL", "BaytBossSQL", "PERFECTUS", "Bayt", "MSSQLSERVER"))
     $cmbInstance.Text = "BaytTicariSQL"
     $cmbInstance.Location = New-Object System.Drawing.Point(115, 65)
     $cmbInstance.Size = New-Object System.Drawing.Size(290, 25)
@@ -1284,7 +1398,7 @@ function Show-InstallGUI {
 
     # Mevcut SQL Instance bilgisi goster
     if ($ExistingSqlNames.Count -gt 0) {
-        $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) ($($_.Status))" }) -join ", "
+        $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) [$($_.Edition)] ($($_.Status))" }) -join ", "
         $lblExistSql = New-Object System.Windows.Forms.Label
         $lblExistSql.Text = "Mevcut instance: $sqlInstStr"
         $lblExistSql.Location = New-Object System.Drawing.Point(15, 168)
@@ -1481,6 +1595,7 @@ function Show-InstallGUI {
                     $lblMgmtResult.ForeColor = [System.Drawing.Color]::Green
                     $lblMgmtResult.Text = "$iName basariyla kaldirildi!"
                     $cmbMgmtInst.Items.RemoveAt($cmbMgmtInst.SelectedIndex)
+                    $ExistingSqlNames.Remove($iName.ToUpperInvariant())
                     if ($cmbMgmtInst.Items.Count -gt 0) { $cmbMgmtInst.SelectedIndex = 0 }
                 } else {
                     $lblMgmtResult.ForeColor = [System.Drawing.Color]::Red
@@ -1668,7 +1783,15 @@ function Show-InstallGUI {
             }
         }
 
-        $versionMap = @{ 0 = "2019"; 1 = "2022"; 2 = "2025" }
+        # Versiyon + edition haritasi (combo index -> SqlDownloadInfo key)
+        $versionMap = @{
+            0 = "2019-standard"
+            1 = "2019-express"
+            2 = "2022-standard"
+            3 = "2022-express"
+            4 = "2025-standard"
+            5 = "2025-express"
+        }
 
         # Disk sector fix secimi
         $applySectorFix = $false
@@ -1681,7 +1804,7 @@ function Show-InstallGUI {
             InstallNet35     = $chkNet35.Checked
             InstallNet481    = $chkNet481.Checked
             InstallSQL       = $chkSQL.Checked
-            SqlVersion       = $versionMap[$cmbVersion.SelectedIndex]
+            SqlVersion       = $versionMap[$cmbVersion.SelectedIndex]  # ornek: "2022-standard"
             InstanceName     = $cmbInstance.Text.Trim().ToUpperInvariant()
             SAPassword       = $txtPassword.Text
             InstallFirewall  = if ($chkSQL.Checked) { $chkFirewall.Checked } else { $false }
@@ -1717,7 +1840,7 @@ function Test-Prerequisites {
 
     # 64-bit kontrol
     if (-not [Environment]::Is64BitOperatingSystem) {
-        throw "64-bit isletim sistemi gereklidir! SQL Server Express sadece x64 destekler."
+        throw "64-bit isletim sistemi gereklidir! SQL Server sadece x64 destekler."
     }
     Write-OK "64-bit isletim sistemi"
 
@@ -1790,9 +1913,9 @@ function Get-SqlSetupPath {
     $Info = $Script:SqlDownloadInfo[$Version]
     $TempDir = "$($Script:TempBase)\$Version"
 
-    # Onceki kalintilari temizle
-    if (Test-Path $TempDir) {
-        Remove-Item $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+    # Onceki extract kalintilari temizle, indirme dosyalarini koru
+    if (Test-Path "$TempDir\Extracted") {
+        Remove-Item "$TempDir\Extracted" -Recurse -Force -ErrorAction SilentlyContinue
     }
     New-Item -Path $TempDir -ItemType Directory -Force | Out-Null
 
@@ -1809,9 +1932,16 @@ function Get-SqlSetupPath {
     # -------------------------------------------------------
     $DownloaderPath = "$TempDir\SqlDownloader.exe"
 
-    Write-Step "SQL Server $Version indiriliyor..."
-
-    $Downloaded = Download-FileWithRetry -Urls $DownloadUrls -OutputPath $DownloaderPath -Description "SQL Server $Version"
+    # Mevcut indirme dosyasini kontrol et - varsa tekrar indirme
+    $Downloaded = $false
+    if ((Test-Path $DownloaderPath) -and (Get-Item $DownloaderPath).Length -gt 1MB) {
+        $ExistingSizeMB = [math]::Round((Get-Item $DownloaderPath).Length / 1MB, 1)
+        Write-Step "SQL Server $Version indirme dosyasi mevcut ($ExistingSizeMB MB), tekrar indirilmiyor."
+        $Downloaded = $true
+    } else {
+        Write-Step "SQL Server $Version indiriliyor..."
+        $Downloaded = Download-FileWithRetry -Urls $DownloadUrls -OutputPath $DownloaderPath -Description "SQL Server $Version"
+    }
 
     if (-not $Downloaded) {
         # Fallback URL'leri dene (2019 icin Direct basarisiz olursa SSEI dene)
@@ -1832,54 +1962,72 @@ function Get-SqlSetupPath {
     $InstallerExePath = $DownloaderPath
 
     if ($DownloadType -eq "SSEI") {
-        Write-Step "SQL Server $Version medyasi SSEI ile indiriliyor..."
-        Write-Info "Bu islem internet hiziniza gore 5-20 dakika surebilir."
-
-        $SSEIArgs = @(
-            "/ACTION=Download",
-            "/MEDIAPATH=`"$MediaDir`"",
-            "/MEDIATYPE=Core",
-            "/QUIET"
-        )
-
-        $SSEIProc = Start-Process -FilePath $DownloaderPath -ArgumentList $SSEIArgs -PassThru
-
-        # Indirme ilerlemesini izle
-        $LastSizeMB = 0
-        while (-not $SSEIProc.HasExited) {
-            $Files = Get-ChildItem $MediaDir -Recurse -File -ErrorAction SilentlyContinue |
-                     Where-Object { $_.Extension -in @('.exe', '.cab', '.msi') }
-            if ($Files) {
-                $TotalMB = [math]::Round(($Files | Measure-Object -Property Length -Sum).Sum / 1MB, 0)
-                if ($TotalMB -ne $LastSizeMB) {
-                    Write-Host "`r   [i]  Indirilen: $TotalMB MB...          " -ForegroundColor Cyan -NoNewline
-                    $LastSizeMB = $TotalMB
-                }
-            }
-            Start-Sleep -Seconds 5
-        }
-        Write-Host ""
-
-        if ($SSEIProc.ExitCode -ne 0) {
-            throw "SSEI indirme basarisiz oldu. Exit Code: $($SSEIProc.ExitCode)"
-        }
-
-        Write-OK "Medya indirme tamamlandi."
-
-        # Indirilen buyuk .exe dosyasini bul
-        $InstallerExePath = Get-ChildItem $MediaDir -Filter "*.exe" -Recurse |
+        # Onceden indirilmis medya dosyasi var mi kontrol et
+        # Express: buyuk .exe (>50MB), Developer: kucuk .exe + buyuk .box
+        $ExistingMediaExe = Get-ChildItem $MediaDir -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
+                            Select-Object -First 1
+        $ExistingMediaBox = Get-ChildItem $MediaDir -Filter "*.box" -Recurse -ErrorAction SilentlyContinue |
                             Where-Object { $_.Length -gt 50MB } |
-                            Select-Object -First 1 -ExpandProperty FullName
+                            Select-Object -First 1
 
-        if (-not $InstallerExePath) {
-            # .exe bulunamazsa, medya dizininde dogrudan setup.exe olabilir
-            $DirectSetup = Get-ChildItem $MediaDir -Filter "setup.exe" -Recurse |
-                           Select-Object -First 1 -ExpandProperty FullName
-            if ($DirectSetup) {
-                Write-OK "Setup dosyasi dogrudan bulundu: $DirectSetup"
-                return $DirectSetup
+        if ($ExistingMediaExe -and ($ExistingMediaExe.Length -gt 50MB -or $ExistingMediaBox)) {
+            $MediaSizeMB = if ($ExistingMediaBox) { [math]::Round($ExistingMediaBox.Length / 1MB, 1) } else { [math]::Round($ExistingMediaExe.Length / 1MB, 1) }
+            Write-Step "SQL Server $Version medya dosyasi mevcut ($MediaSizeMB MB), tekrar indirilmiyor."
+            $InstallerExePath = $ExistingMediaExe.FullName
+        } else {
+            Write-Step "SQL Server $Version medyasi SSEI ile indiriliyor..."
+            Write-Info "Bu islem internet hiziniza gore 5-20 dakika surebilir."
+
+            # SSEI argumanlari - Express SSEI icin /MEDIATYPE=Core gerekli, Developer SSEI desteklemiyor
+            if ($Version -like '*-express') {
+                $SSEIArgs = @(
+                    "/ACTION=Download",
+                    "/MEDIAPATH=`"$MediaDir`"",
+                    "/MEDIATYPE=Core",
+                    "/QUIET"
+                )
+            } else {
+                $SSEIArgs = @(
+                    "/ACTION=Download",
+                    "/MEDIAPATH=`"$MediaDir`"",
+                    "/QUIET"
+                )
             }
-            throw "SSEI medya indirdikten sonra installer dosyasi bulunamadi! Dizin: $MediaDir"
+
+            $SSEIProc = Start-Process -FilePath $DownloaderPath -ArgumentList $SSEIArgs -PassThru
+
+            # Indirme ilerlemesini izle
+            $LastSizeMB = 0
+            while (-not $SSEIProc.HasExited) {
+                $Files = Get-ChildItem $MediaDir -Recurse -File -ErrorAction SilentlyContinue |
+                         Where-Object { $_.Extension -in @('.exe', '.cab', '.msi', '.box') }
+                if ($Files) {
+                    $TotalMB = [math]::Round(($Files | Measure-Object -Property Length -Sum).Sum / 1MB, 0)
+                    if ($TotalMB -ne $LastSizeMB) {
+                        Write-Host "`r   [i]  Indirilen: $TotalMB MB...          " -ForegroundColor Cyan -NoNewline
+                        $LastSizeMB = $TotalMB
+                    }
+                }
+                Start-Sleep -Seconds 5
+            }
+            Write-Host ""
+
+            if ($SSEIProc.ExitCode -ne 0) {
+                throw "SSEI indirme basarisiz oldu. Exit Code: $($SSEIProc.ExitCode)"
+            }
+
+            Write-OK "Medya indirme tamamlandi."
+
+            # Indirilen installer .exe dosyasini bul
+            # Developer SSEI: kucuk .exe (bootstrapper) + buyuk .box dosyasi indirir
+            # Express SSEI: buyuk .exe (all-in-one) indirir
+            $InstallerExePath = Get-ChildItem $MediaDir -Filter "*.exe" -Recurse |
+                                Sort-Object Length -Descending |
+                                Select-Object -First 1 -ExpandProperty FullName
+
+            if (-not $InstallerExePath) {
+                throw "SSEI medya indirdikten sonra installer dosyasi bulunamadi! Dizin: $MediaDir"
+            }
         }
 
         Write-Info "Installer: $InstallerExePath"
@@ -1947,6 +2095,11 @@ function Install-SqlServerEngine {
         "/INDICATEPROGRESS"
     )
 
+    # Product Key (Standard Edition)
+    if ($Info.ProductKey) {
+        $InstallArgs.Add("/PID=`"$($Info.ProductKey)`"") | Out-Null
+    }
+
     # Instant File Initialization (2019+)
     if ($Info.SupportsInstantInit) {
         $InstallArgs.Add("/SQLSVCINSTANTFILEINIT=True") | Out-Null
@@ -1954,7 +2107,7 @@ function Install-SqlServerEngine {
 
     # TempDB optimizasyonu (2019+ setup'ta otomatik yapilir)
     if ($Info.SupportsTempDBParams) {
-        $TempDBCount = [math]::Max(1, [math]::Min($LogicalCPUs, $Info.ExpressMaxCores))
+        $TempDBCount = [math]::Max(1, [math]::Min($LogicalCPUs, 8))
         $InstallArgs.Add("/SQLTEMPDBFILECOUNT=$TempDBCount") | Out-Null
         $InstallArgs.Add("/SQLTEMPDBFILESIZE=256") | Out-Null
         $InstallArgs.Add("/SQLTEMPDBFILEGROWTH=128") | Out-Null
@@ -2209,18 +2362,14 @@ function Set-SqlPerformanceConfig {
     $TotalRAMMB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1MB, 0)
     $LogicalCPUs = (Get-CimInstance Win32_Processor | Select-Object -ExpandProperty NumberOfLogicalProcessors | Measure-Object -Sum).Sum
 
-    # Express limitleri dahilinde max memory hesapla
-    $AutoMaxMemory = [math]::Min(
-        [math]::Floor($TotalRAMMB * 0.75),
-        $Info.ExpressMaxMemoryMB
-    )
-    $AutoMaxMemory = [math]::Max($AutoMaxMemory, 256) # Minimum 256 MB
+    # Max memory: RAM'in %75'i (Standard edition icin 128GB limit)
+    $AutoMaxMemory = [math]::Max([math]::Floor($TotalRAMMB * 0.75), 256)
 
-    # MAXDOP hesapla
-    $AutoMaxDOP = [math]::Max(1, [math]::Min([math]::Floor($LogicalCPUs / 2), $Info.ExpressMaxCores))
+    # MAXDOP: Tum CPU core'lari kullan (edition upgrade'de tekrar ayar gerekmez)
+    $AutoMaxDOP = [math]::Max(1, $LogicalCPUs)
 
     Write-Info "Toplam RAM: $TotalRAMMB MB | CPU: $LogicalCPUs core"
-    Write-Info "Max Memory: $AutoMaxMemory MB | MAXDOP: $AutoMaxDOP | Cost Threshold: 25"
+    Write-Info "Max Memory: $AutoMaxMemory MB (%75 RAM) | MAXDOP: $AutoMaxDOP (tum core) | Cost Threshold: 25"
 
     # sp_configure komutlari
     $ConfigCommands = @(
@@ -2253,7 +2402,7 @@ function Set-SqlPerformanceConfig {
     # TempDB post-install optimizasyonu
     # Sorgu basarili olduysa TempDB ayarlamasi yapilmis demektir
     if (-not $Info.SupportsTempDBParams) {
-        Set-TempDBOptimization -ServerInstance $ServerInstance -LogicalCPUs $LogicalCPUs -MaxCores $Info.ExpressMaxCores
+        Set-TempDBOptimization -ServerInstance $ServerInstance -LogicalCPUs $LogicalCPUs -MaxCores 8
     }
 }
 
@@ -2391,7 +2540,7 @@ function Show-Summary {
     Write-Host "            KURULUM BASARIYLA TAMAMLANDI!" -ForegroundColor Green
     Write-Host "================================================================" -ForegroundColor Green
     Write-Host ""
-    Write-Host "  SQL Server Versiyonu : $Version Express" -ForegroundColor White
+    Write-Host "  SQL Server Versiyonu : $Version Standard" -ForegroundColor White
     Write-Host "  Instance Adi         : $InstanceName" -ForegroundColor White
     Write-Host "  Baglanti Adresi      : $ServerInstance" -ForegroundColor White
     Write-Host "  SA Kullanici Adi     : sa" -ForegroundColor White
@@ -2434,6 +2583,25 @@ function Main {
         Write-Banner
         Write-Info "Log dosyasi: $($Script:LogFile)"
 
+        # C:\Bay-T klasorune Everyone tam yetki ver
+        try {
+            $BaytRoot = Split-Path $Script:TempBase -Parent
+            $Acl = Get-Acl $BaytRoot
+            $EveryoneSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-1-0")
+            $AccessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $EveryoneSid,
+                "FullControl",
+                "ContainerInherit,ObjectInherit",
+                "None",
+                "Allow"
+            )
+            $Acl.SetAccessRule($AccessRule)
+            Set-Acl $BaytRoot $Acl
+            Write-OK "$BaytRoot klasorune Everyone tam yetki verildi"
+        } catch {
+            Write-Warn "$BaytRoot klasorune yetki verilemedi: $($_.Exception.Message)"
+        }
+
         # Guncelleme kontrolu
         Test-ScriptUpdate
 
@@ -2450,7 +2618,7 @@ function Main {
                 InstallNet35     = $InstallNet35.IsPresent
                 InstallNet481    = $InstallNet481.IsPresent
                 InstallSQL       = $InstallSQL.IsPresent
-                SqlVersion       = if ($SqlVersion) { $SqlVersion } else { "2019" }
+                SqlVersion       = if ($SqlVersion) { $SqlVersion } else { "2019-standard" }
                 InstanceName     = if ($InstanceName) { $InstanceName.ToUpperInvariant() } else { "BAYTTICARISQL" }
                 SAPassword       = if ($SAPass) { $SAPass } else { $Script:SAPassword }
                 InstallFirewall  = $InstallFirewall.IsPresent
@@ -2486,7 +2654,9 @@ function Main {
         if ($Selections.InstallNet35)  { Write-Host "  |  [+] .NET Framework 3.5                |" -ForegroundColor Green }
         if ($Selections.InstallNet481) { Write-Host "  |  [+] .NET Framework 4.8.1              |" -ForegroundColor Green }
         if ($Selections.InstallSQL) {
-            $sqlLine = "  |  [+] SQL Server $($Selections.SqlVersion) - $($Selections.InstanceName)"
+            # SqlVersion ornegi: "2022-standard" -> "2022 Standard" seklinde gosterim
+            $sqlDisplayName = $Selections.SqlVersion -replace '-',' ' -replace 'standard','Standard' -replace 'express','Express'
+            $sqlLine = "  |  [+] SQL Server $sqlDisplayName - $($Selections.InstanceName)"
             $sqlLine = $sqlLine.PadRight(43) + "|"
             Write-Host $sqlLine -ForegroundColor Green
         }
@@ -2598,9 +2768,27 @@ function Main {
             Install-BaytApplication -InstallCapital:$Selections.InstallCapital -InstallBoss:$Selections.InstallBoss
         }
 
-        # Temizlik
+        # Temizlik - SQL indirme dosyalarini koru (yavas internet olan lokasyonlar icin)
         if (Test-Path $Script:TempBase) {
-            Remove-Item $Script:TempBase -Recurse -Force -ErrorAction SilentlyContinue
+            # Extract dizinlerini temizle
+            Get-ChildItem $Script:TempBase -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^\d{4}$' } |
+                ForEach-Object {
+                    $extractPath = Join-Path $_.FullName "Extracted"
+                    if (Test-Path $extractPath) {
+                        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            # VCRedist ve diger gecici dosyalari temizle
+            $cleanItems = @(
+                "$($Script:TempBase)\VCRedist",
+                "$($Script:TempBase)\ndp481-setup.exe",
+                "$($Script:TempBase)\sqlncli.msi"
+            )
+            foreach ($item in $cleanItems) {
+                if (Test-Path $item) { Remove-Item $item -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+            Write-Info "SQL Server indirme dosyalari korundu: $($Script:TempBase)"
         }
 
         # Final

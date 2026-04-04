@@ -251,7 +251,9 @@ Windows 11'de bazi NVMe suruculer 4096 byte'tan buyuk fiziksel sektor boyutu rap
 
 ## Guvenlik
 
-SA kullanicisinin varsayilan sifresi: `Bay_T252!`
+> **SORUMLULUK REDDI:** Bu projede yer alan SA sifreleri, SQL Server product key'leri ve diger kimlik bilgileri **YALNIZCA test, gelistirme ve degerlendirme amaclidir**. Uretim (production) ortaminda kullanilmasi tavsiye edilmez. Product key'ler Microsoft'un kamuya acik degerlendirme anahtarlaridir. Uretim ortami icin Microsoft'tan uygun lisans satin alinmalidir. Script sahibi, lisans ihlalleri veya guvenlik aciklarindan sorumlu tutulamaz.
+
+SA kullanicisinin varsayilan sifresi: `Bay_T252!` *(yalnizca test amacli)*
 
 > **NOT:** `BaytTicariSQL` veya `BaytBossSQL` instance'lari icin SA sifre degisimi gerekmez. Bayt yazilim setup'lari SQL'e baglanirken bu sifreyi otomatik olarak belirler ve degistirir. Ekstra bir islem yapmaniza gerek yoktur.
 
@@ -269,3 +271,5 @@ SA kullanicisinin varsayilan sifresi: `Bay_T252!`
 ## Lisans
 
 Bu proje serbestce kullanilabilir.
+
+> **Sorumluluk Reddi:** Bu arac "oldugu gibi" (as-is) sunulmaktadir. Herhangi bir garanti verilmemektedir. Kullanici, bu araci kullanarak olusabilecek tum risklerden kendisi sorumludur. Scriptte yer alan sifre ve product key degerleri test amaclidir; uretim ortaminda kullanim, kullanicinin kendi sorumlulugundadir.

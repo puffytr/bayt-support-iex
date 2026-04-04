@@ -1,0 +1,5 @@
+# Copilot agent/instruction/skill/prompt dosyaları - sadece local
+.github/agents/
+.github/instructions/
+.github/skills/
+.github/prompts/
