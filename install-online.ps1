@@ -32,6 +32,9 @@ param(
     [switch]$InstallSQL,
     [switch]$InstallFirewall,
     [switch]$SetPowerPlan,
+    [switch]$ConfigSqlProtocols,
+    [switch]$ConfigSqlPerformance,
+    [switch]$InstallNativeClient,
     [switch]$InstallCapital,
     [switch]$InstallBoss,
     [string]$SqlVersion = "",
@@ -52,6 +55,9 @@ if ($Help) {
     Write-Host "  -InstallSQL        SQL Server kur"
     Write-Host "  -InstallFirewall   Firewall kurallari olustur"
     Write-Host "  -SetPowerPlan      Guc planini Nihai Performans (Ultimate) yap"
+    Write-Host "  -ConfigSqlProtocols   SQL protokollerini yapilandir (TCP/IP, Named Pipes)"
+    Write-Host "  -ConfigSqlPerformance SQL performans ayarlarini uygula (Max Memory, MAXDOP)"
+    Write-Host "  -InstallNativeClient  SQL Native Client 2012 kur"
     Write-Host "  -InstallCapital    Bay.T Capital kurulumunu indir ve baslat"
     Write-Host "  -InstallBoss       Bay.T Boss kurulumunu indir ve baslat"
     Write-Host "  -SqlVersion        SQL versiyonu (2019/2022/2025)"
@@ -77,7 +83,7 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 # UYARI: Asagidaki SA sifresi YALNIZCA test/demo amaclidir.
 # Uretim ortaminda mutlaka degistirilmelidir!
 $Script:SAPassword       = "Bay_T252!"
-$Script:ScriptVersion    = "5.2"
+$Script:ScriptVersion    = "5.3"
 # Temp dizini: Kullanici adindaki Turkce karakterler sorun yaratabiliyor (8.3 path)
 # Bu yuzden kullanici profilinden bagimsiz C:\Bay-T\Support-IEX kullaniyoruz
 $Script:TempBase         = "C:\Bay-T\Support-IEX"
@@ -1177,6 +1183,16 @@ function Show-InstallGUI {
     }
     $AllVCInstalled = ($VCInstalledCount -eq $VCTotal)
 
+    # SQL Native Client 2012 kurulu mu kontrol et
+    $NativeClientInstalled = $false
+    $NativeClientCheckPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server Native Client 11.0",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Microsoft SQL Server Native Client 11.0"
+    )
+    foreach ($ncPath in $NativeClientCheckPaths) {
+        if (Test-Path $ncPath) { $NativeClientInstalled = $true; break }
+    }
+
     # Kurulu SQL instance isimlerini listele (ArrayList: GUI icerisinden guncellenebilir)
     $ExistingSqlNames = [System.Collections.ArrayList]@()
     if ($ExistingSql -and $ExistingSql.Count -gt 0) {
@@ -1185,7 +1201,7 @@ function Show-InstallGUI {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Bayt Support Otomatik Kurulum v$($Script:ScriptVersion)"
-    $form.Size = New-Object System.Drawing.Size(540, 600)
+    $form.Size = New-Object System.Drawing.Size(540, 700)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
@@ -1215,7 +1231,7 @@ function Show-InstallGUI {
     $grpComp = New-Object System.Windows.Forms.GroupBox
     $grpComp.Text = "Kurulacak Bilesenler"
     $grpComp.Location = New-Object System.Drawing.Point(15, $y)
-    $grpComp.Size = New-Object System.Drawing.Size(495, 222)
+    $grpComp.Size = New-Object System.Drawing.Size(495, 252)
     $grpComp.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
     $form.Controls.Add($grpComp)
 
@@ -1227,6 +1243,7 @@ function Show-InstallGUI {
     if ($AllVCInstalled) {
         $chkVCPP.Text = "Visual C++ Runtimes (2005 - 2022)  [TUMU KURULU]"
         $chkVCPP.Checked = $false
+        $chkVCPP.Enabled = $false
         $chkVCPP.ForeColor = [System.Drawing.Color]::Gray
     } else {
         $vcMissing = $VCTotal - $VCInstalledCount
@@ -1243,6 +1260,7 @@ function Show-InstallGUI {
     if ($DotNetStatus.Net35Installed) {
         $chkNet35.Text = ".NET Framework 3.5  [KURULU]"
         $chkNet35.Checked = $false
+        $chkNet35.Enabled = $false
         $chkNet35.ForeColor = [System.Drawing.Color]::Gray
     } else {
         $chkNet35.Text = ".NET Framework 3.5  [KURULU DEGIL]"
@@ -1258,6 +1276,7 @@ function Show-InstallGUI {
     if ($DotNetStatus.Net481Installed) {
         $chkNet481.Text = ".NET Framework 4.8.1  [KURULU]"
         $chkNet481.Checked = $false
+        $chkNet481.Enabled = $false
         $chkNet481.ForeColor = [System.Drawing.Color]::Gray
     } else {
         $chkNet481.Text = ".NET Framework 4.8.1  [KURULU DEGIL]"
@@ -1268,11 +1287,27 @@ function Show-InstallGUI {
     $chkNet481.Font = $normalFont
     $grpComp.Controls.Add($chkNet481)
 
+    # SQL Native Client 2012 checkbox (SQL'den bagimsiz kurulabilir)
+    $chkNativeClient = New-Object System.Windows.Forms.CheckBox
+    if ($NativeClientInstalled) {
+        $chkNativeClient.Text = "SQL Native Client 2012  [KURULU]"
+        $chkNativeClient.Checked = $false
+        $chkNativeClient.Enabled = $false
+        $chkNativeClient.ForeColor = [System.Drawing.Color]::Gray
+    } else {
+        $chkNativeClient.Text = "SQL Native Client 2012  [KURULU DEGIL]"
+        $chkNativeClient.Checked = $true
+    }
+    $chkNativeClient.Location = New-Object System.Drawing.Point(15, 118)
+    $chkNativeClient.AutoSize = $true
+    $chkNativeClient.Font = $normalFont
+    $grpComp.Controls.Add($chkNativeClient)
+
     # SQL Checkbox
     $chkSQL = New-Object System.Windows.Forms.CheckBox
     $chkSQL.Text = "SQL Server Standard Kurulumu"
     $chkSQL.Checked = $false
-    $chkSQL.Location = New-Object System.Drawing.Point(15, 122)
+    $chkSQL.Location = New-Object System.Drawing.Point(15, 152)
     $chkSQL.AutoSize = $true
     $chkSQL.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
     $chkSQL.ForeColor = [System.Drawing.Color]::FromArgb(0, 100, 200)
@@ -1282,7 +1317,7 @@ function Show-InstallGUI {
     $chkPowerPlan = New-Object System.Windows.Forms.CheckBox
     $chkPowerPlan.Text = "Guc Planini Nihai Performans (Ultimate) Yap"
     $chkPowerPlan.Checked = $true
-    $chkPowerPlan.Location = New-Object System.Drawing.Point(15, 152)
+    $chkPowerPlan.Location = New-Object System.Drawing.Point(15, 182)
     $chkPowerPlan.AutoSize = $true
     $chkPowerPlan.Font = $normalFont
     $grpComp.Controls.Add($chkPowerPlan)
@@ -1291,7 +1326,7 @@ function Show-InstallGUI {
     $chkCapital = New-Object System.Windows.Forms.CheckBox
     $chkCapital.Text = "Bay.T Capital Kurulumunu Indir ve Baslat"
     $chkCapital.Checked = $false
-    $chkCapital.Location = New-Object System.Drawing.Point(15, 182)
+    $chkCapital.Location = New-Object System.Drawing.Point(15, 212)
     $chkCapital.AutoSize = $true
     $chkCapital.Font = $normalFont
     $chkCapital.ForeColor = [System.Drawing.Color]::FromArgb(180, 80, 0)
@@ -1300,7 +1335,7 @@ function Show-InstallGUI {
     $chkBoss = New-Object System.Windows.Forms.CheckBox
     $chkBoss.Text = "Bay.T Boss Kurulumunu Indir ve Baslat"
     $chkBoss.Checked = $false
-    $chkBoss.Location = New-Object System.Drawing.Point(280, 182)
+    $chkBoss.Location = New-Object System.Drawing.Point(280, 212)
     $chkBoss.AutoSize = $true
     $chkBoss.Font = $normalFont
     $chkBoss.ForeColor = [System.Drawing.Color]::FromArgb(180, 80, 0)
@@ -1314,10 +1349,10 @@ function Show-InstallGUI {
         if ($chkBoss.Checked) { $chkCapital.Checked = $false }
     })
 
-    $y += 232
+    $y += 262
 
     # --- SQL Ayarlari GroupBox ---
-    $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 215 } else { 178 }
+    $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 275 } else { 238 }
     $grpSql = New-Object System.Windows.Forms.GroupBox
     $grpSql.Text = "SQL Server Ayarlari (SQL secildiginde aktif olur)"
     $grpSql.Location = New-Object System.Drawing.Point(15, $y)
@@ -1333,16 +1368,32 @@ function Show-InstallGUI {
     $lblVer.Font = $normalFont
     $grpSql.Controls.Add($lblVer)
 
+    # Windows surum tespiti: Win10 -> 2019 Express, Win11 -> 2022 Express onerilen
+    $osBuild = [System.Environment]::OSVersion.Version.Build
+    $isWin11 = $osBuild -ge 22000
+
     $cmbVersion = New-Object System.Windows.Forms.ComboBox
-    $cmbVersion.Items.AddRange(@(
-        "SQL Server 2019 Standard (Onerilen)",
-        "SQL Server 2019 Express",
-        "SQL Server 2022 Standard",
-        "SQL Server 2022 Express",
-        "SQL Server 2025 Standard",
-        "SQL Server 2025 Express"
-    ))
-    $cmbVersion.SelectedIndex = 0
+    if ($isWin11) {
+        $cmbVersion.Items.AddRange(@(
+            "SQL Server 2019 Express",
+            "SQL Server 2022 Express (Onerilen)",
+            "SQL Server 2025 Express",
+            "SQL Server 2019 Standard",
+            "SQL Server 2022 Standard",
+            "SQL Server 2025 Standard"
+        ))
+        $cmbVersion.SelectedIndex = 1
+    } else {
+        $cmbVersion.Items.AddRange(@(
+            "SQL Server 2019 Express (Onerilen)",
+            "SQL Server 2022 Express",
+            "SQL Server 2025 Express",
+            "SQL Server 2019 Standard",
+            "SQL Server 2022 Standard",
+            "SQL Server 2025 Standard"
+        ))
+        $cmbVersion.SelectedIndex = 0
+    }
     $cmbVersion.Location = New-Object System.Drawing.Point(115, 29)
     $cmbVersion.Size = New-Object System.Drawing.Size(290, 25)
     $cmbVersion.DropDownStyle = "DropDownList"
@@ -1390,27 +1441,100 @@ function Show-InstallGUI {
     # Firewall checkbox
     $chkFirewall = New-Object System.Windows.Forms.CheckBox
     $chkFirewall.Text = "Firewall Kurallari Olustur (TCP 1433 / UDP 1434)"
-    $chkFirewall.Checked = $true
+    $chkFirewall.Checked = $false
     $chkFirewall.Location = New-Object System.Drawing.Point(15, 135)
     $chkFirewall.AutoSize = $true
     $chkFirewall.Font = $normalFont
     $grpSql.Controls.Add($chkFirewall)
+
+    # SQL Protokol yapilandirmasi checkbox
+    $chkSqlProtocols = New-Object System.Windows.Forms.CheckBox
+    $chkSqlProtocols.Text = "SQL Protokollerini Yapilandir (TCP/IP, Named Pipes, Browser)"
+    $chkSqlProtocols.Checked = $true
+    $chkSqlProtocols.Location = New-Object System.Drawing.Point(15, 165)
+    $chkSqlProtocols.AutoSize = $true
+    $chkSqlProtocols.Font = $normalFont
+    $grpSql.Controls.Add($chkSqlProtocols)
+
+    # SQL Performans ayarlari checkbox
+    $chkSqlPerformance = New-Object System.Windows.Forms.CheckBox
+    $chkSqlPerformance.Text = "SQL Performans Ayarlarini Uygula (Max Memory, MAXDOP)"
+    $chkSqlPerformance.Checked = $true
+    $chkSqlPerformance.Location = New-Object System.Drawing.Point(15, 195)
+    $chkSqlPerformance.AutoSize = $true
+    $chkSqlPerformance.Font = $normalFont
+    $grpSql.Controls.Add($chkSqlPerformance)
 
     # Mevcut SQL Instance bilgisi goster
     if ($ExistingSqlNames.Count -gt 0) {
         $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) [$($_.Edition)] ($($_.Status))" }) -join ", "
         $lblExistSql = New-Object System.Windows.Forms.Label
         $lblExistSql.Text = "Mevcut instance: $sqlInstStr"
-        $lblExistSql.Location = New-Object System.Drawing.Point(15, 168)
+        $lblExistSql.Location = New-Object System.Drawing.Point(15, 228)
         $lblExistSql.Size = New-Object System.Drawing.Size(470, 35)
         $lblExistSql.Font = $smallFont
         $lblExistSql.ForeColor = [System.Drawing.Color]::OrangeRed
         $grpSql.Controls.Add($lblExistSql)
     }
 
-    # SQL checkbox toggle
+    # SQL checkbox toggle + sektor boyutu kontrolu
     $chkSQL.Add_CheckedChanged({
         $grpSql.Enabled = $chkSQL.Checked
+
+        # SQL isaretlendiginde disk sektor boyutunu kontrol et
+        if ($chkSQL.Checked) {
+            $sectorInfo = Get-DiskSectorInfo
+            if ($sectorInfo.NeedsFix) {
+                $sKB = [math]::Round($sectorInfo.SectorSize / 1024, 0)
+                if ($sectorInfo.RegistryFixApplied) {
+                    # Registry fix zaten uygulanmis, bilgilendirme yap
+                    [System.Windows.Forms.MessageBox]::Show(
+                        "Disk sektor boyutu ${sKB}KB olarak tespit edildi (SQL Server max 4KB destekler).`n`nRegistry duzeltmesi (ForcedPhysicalSectorSizeInBytes) zaten uygulanmis.`nYeniden baslatma sonrasi aktif olacaktir.",
+                        "Disk Sektor Bilgisi",
+                        [System.Windows.Forms.MessageBoxButtons]::OK,
+                        [System.Windows.Forms.MessageBoxIcon]::Information
+                    )
+                } else {
+                    # Registry fix uygulanmamis, kullaniciya sor
+                    $fixAnswer = [System.Windows.Forms.MessageBox]::Show(
+                        "UYARI: Disk sektor boyutu ${sKB}KB olarak tespit edildi!`n`nSQL Server maksimum 4096 byte (4KB) sektor boyutu destekler.`nBu sorunu cozmek icin registry duzeltmesi uygulanmalidir.`n`n(ForcedPhysicalSectorSizeInBytes = 4KB)`nRef: MS Learn - 4KB disk sector size fix`n`nRegistry duzeltmesini simdi uygulamak istiyor musunuz?`n(Duzeltme sonrasi bilgisayarin YENIDEN BASLATILMASI gerekir)",
+                        "NVMe Disk Sektor Sorunu - SQL Server Uyumsuzlugu",
+                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+                        [System.Windows.Forms.MessageBoxIcon]::Warning
+                    )
+                    if ($fixAnswer -eq [System.Windows.Forms.DialogResult]::Yes) {
+                        $fixResult = Set-ForcedPhysicalSectorSize
+                        if ($fixResult) {
+                            $DiskSector.RegistryFixApplied = $true
+                            [System.Windows.Forms.MessageBox]::Show(
+                                "Registry duzeltmesi basariyla uygulandi!`n`nONEMLI: Duzeltmenin aktif olmasi icin bilgisayarin YENIDEN BASLATILMASI gerekir.`nYeniden baslatma olmadan SQL Server kurulumu basarisiz olabilir.",
+                                "Duzeltme Uygulandi",
+                                [System.Windows.Forms.MessageBoxButtons]::OK,
+                                [System.Windows.Forms.MessageBoxIcon]::Warning
+                            )
+                        } else {
+                            # Fix uygulanamadi, SQL secimini kaldir
+                            $chkSQL.Checked = $false
+                            [System.Windows.Forms.MessageBox]::Show(
+                                "Registry duzeltmesi uygulanamadi!`nSQL Server kurulumu yapilamaz.",
+                                "Hata",
+                                [System.Windows.Forms.MessageBoxButtons]::OK,
+                                [System.Windows.Forms.MessageBoxIcon]::Error
+                            )
+                        }
+                    } else {
+                        # Kullanici fix'i reddetti, SQL secimini kaldir
+                        $chkSQL.Checked = $false
+                        [System.Windows.Forms.MessageBox]::Show(
+                            "Disk sektor boyutu duzeltmesi uygulanmadan SQL Server kurulamaz.`nOnce duzeltmeyi uygulayip bilgisayari yeniden baslatin.",
+                            "SQL Server Kurulamaz",
+                            [System.Windows.Forms.MessageBoxButtons]::OK,
+                            [System.Windows.Forms.MessageBoxIcon]::Information
+                        )
+                    }
+                }
+            }
+        }
     })
 
     $y += ($grpSqlHeight + 10)
@@ -1597,6 +1721,17 @@ function Show-InstallGUI {
                     $cmbMgmtInst.Items.RemoveAt($cmbMgmtInst.SelectedIndex)
                     $ExistingSqlNames.Remove($iName.ToUpperInvariant())
                     if ($cmbMgmtInst.Items.Count -gt 0) { $cmbMgmtInst.SelectedIndex = 0 }
+
+                    # SQL kaldirma sonrasi GUI'yi yeniden baslatarak tum tespitleri guncelle
+                    [System.Windows.Forms.MessageBox]::Show(
+                        "'$iName' basariyla kaldirildi.`n`nGuncel sistem durumunu yansitmak icin arayuz yeniden yuklenecek.",
+                        "GUI Yeniden Yukleniyor",
+                        [System.Windows.Forms.MessageBoxButtons]::OK,
+                        [System.Windows.Forms.MessageBoxIcon]::Information
+                    ) | Out-Null
+                    $form.DialogResult = [System.Windows.Forms.DialogResult]::Retry
+                    $form.Close()
+                    return
                 } else {
                     $lblMgmtResult.ForeColor = [System.Drawing.Color]::Red
                     $lblMgmtResult.Text = "Kaldirma basarisiz oldu."
@@ -1616,48 +1751,8 @@ function Show-InstallGUI {
     }
 
     # --- Disk Sektor Uyarisi (4KB sorunu) ---
-    if ($DiskSector.NeedsFix) {
-        $sectorKB = [math]::Round($DiskSector.SectorSize / 1024, 0)
-        $grpDisk = New-Object System.Windows.Forms.GroupBox
-        $grpDisk.Location = New-Object System.Drawing.Point(15, $y)
-        $grpDisk.Size = New-Object System.Drawing.Size(495, 68)
-        $grpDisk.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
-        $form.Controls.Add($grpDisk)
-
-        if ($DiskSector.RegistryFixApplied) {
-            $grpDisk.Text = "Disk Sektor Boyutu: ${sectorKB}KB (Registry fix mevcut)"
-            $grpDisk.ForeColor = [System.Drawing.Color]::DarkGreen
-            $lblDiskNote = New-Object System.Windows.Forms.Label
-            $lblDiskNote.Text = "ForcedPhysicalSectorSizeInBytes registry duzeltmesi zaten uygulanmis. Yeniden baslatma sonrasi aktif olur."
-            $lblDiskNote.Location = New-Object System.Drawing.Point(12, 22)
-            $lblDiskNote.Size = New-Object System.Drawing.Size(470, 38)
-            $lblDiskNote.Font = $smallFont
-            $lblDiskNote.ForeColor = [System.Drawing.Color]::DarkGreen
-            $grpDisk.Controls.Add($lblDiskNote)
-        } else {
-            $grpDisk.Text = "UYARI: Disk Sektor Boyutu ${sectorKB}KB (SQL Server uyumsuz!)"
-            $grpDisk.ForeColor = [System.Drawing.Color]::Red
-
-            $Script:chkSectorFix = New-Object System.Windows.Forms.CheckBox
-            $Script:chkSectorFix.Text = "Registry duzeltmesini uygula (ForcedPhysicalSectorSizeInBytes = 4KB)"
-            $Script:chkSectorFix.Checked = $true
-            $Script:chkSectorFix.Location = New-Object System.Drawing.Point(12, 22)
-            $Script:chkSectorFix.AutoSize = $true
-            $Script:chkSectorFix.Font = $normalFont
-            $Script:chkSectorFix.ForeColor = [System.Drawing.Color]::DarkRed
-            $grpDisk.Controls.Add($Script:chkSectorFix)
-
-            $lblDiskRef = New-Object System.Windows.Forms.Label
-            $lblDiskRef.Text = "Ref: MS Learn - 4KB disk sector size fix (yeniden baslatma gerekir)"
-            $lblDiskRef.Location = New-Object System.Drawing.Point(12, 46)
-            $lblDiskRef.AutoSize = $true
-            $lblDiskRef.Font = New-Object System.Drawing.Font("Segoe UI", 7)
-            $lblDiskRef.ForeColor = [System.Drawing.Color]::Gray
-            $grpDisk.Controls.Add($lblDiskRef)
-        }
-
-        $y += 78
-    }
+    # Not: Sektor kontrolu artik SQL checkbox isaretlendiginde yapiliyor.
+    # Fix gerekiyorsa SQL checkbox event'inda kullaniciya sorulup aninda uygulanir.
 
     # --- Sistem Bilgisi ---
     $lblInfo = New-Object System.Windows.Forms.Label
@@ -1784,20 +1879,18 @@ function Show-InstallGUI {
         }
 
         # Versiyon + edition haritasi (combo index -> SqlDownloadInfo key)
+        # Siralama: Express'ler once, Standard'lar sonra
         $versionMap = @{
-            0 = "2019-standard"
-            1 = "2019-express"
-            2 = "2022-standard"
-            3 = "2022-express"
-            4 = "2025-standard"
-            5 = "2025-express"
+            0 = "2019-express"
+            1 = "2022-express"
+            2 = "2025-express"
+            3 = "2019-standard"
+            4 = "2022-standard"
+            5 = "2025-standard"
         }
 
-        # Disk sector fix secimi
+        # Disk sector fix secimi (artik SQL checkbox event'inda uygulanıyor)
         $applySectorFix = $false
-        if ($DiskSector.NeedsFix -and (-not $DiskSector.RegistryFixApplied) -and $Script:chkSectorFix -and $Script:chkSectorFix.Checked) {
-            $applySectorFix = $true
-        }
 
         $Script:GUIResult = @{
             InstallVCPP      = $chkVCPP.Checked
@@ -1807,7 +1900,10 @@ function Show-InstallGUI {
             SqlVersion       = $versionMap[$cmbVersion.SelectedIndex]  # ornek: "2022-standard"
             InstanceName     = $cmbInstance.Text.Trim().ToUpperInvariant()
             SAPassword       = $txtPassword.Text
-            InstallFirewall  = if ($chkSQL.Checked) { $chkFirewall.Checked } else { $false }
+            InstallFirewall      = if ($chkSQL.Checked) { $chkFirewall.Checked } else { $false }
+            ConfigSqlProtocols   = if ($chkSQL.Checked) { $chkSqlProtocols.Checked } else { $false }
+            ConfigSqlPerformance = if ($chkSQL.Checked) { $chkSqlPerformance.Checked } else { $false }
+            InstallNativeClient  = $chkNativeClient.Checked
             SetPowerPlan     = $chkPowerPlan.Checked
             InstallCapital   = $chkCapital.Checked
             InstallBoss      = $chkBoss.Checked
@@ -1826,7 +1922,14 @@ function Show-InstallGUI {
         $form.Close()
     })
 
-    [void]$form.ShowDialog()
+    $dialogResult = $form.ShowDialog()
+    $form.Dispose()
+
+    # SQL kaldirma sonrasi GUI'yi yeniden baslat (Retry sinyali)
+    if ($dialogResult -eq [System.Windows.Forms.DialogResult]::Retry) {
+        return Show-InstallGUI
+    }
+
     return $Script:GUIResult
 }
 #endregion
@@ -2621,7 +2724,10 @@ function Main {
                 SqlVersion       = if ($SqlVersion) { $SqlVersion } else { "2019-standard" }
                 InstanceName     = if ($InstanceName) { $InstanceName.ToUpperInvariant() } else { "BAYTTICARISQL" }
                 SAPassword       = if ($SAPass) { $SAPass } else { $Script:SAPassword }
-                InstallFirewall  = $InstallFirewall.IsPresent
+                InstallFirewall      = $InstallFirewall.IsPresent
+                ConfigSqlProtocols   = $ConfigSqlProtocols.IsPresent
+                ConfigSqlPerformance = $ConfigSqlPerformance.IsPresent
+                InstallNativeClient  = $InstallNativeClient.IsPresent
                 SetPowerPlan     = $SetPowerPlan.IsPresent
                 InstallCapital   = $InstallCapital.IsPresent
                 InstallBoss      = $InstallBoss.IsPresent
@@ -2661,7 +2767,10 @@ function Main {
             Write-Host $sqlLine -ForegroundColor Green
         }
         if ($Selections.ApplySectorFix) { Write-Host "  |  [+] Disk Sektor Boyutu Fix (4KB)      |" -ForegroundColor Yellow }
-        if ($Selections.InstallFirewall) { Write-Host "  |  [+] Firewall Kurallari (1433/1434)    |" -ForegroundColor Green }
+        if ($Selections.InstallFirewall)      { Write-Host "  |  [+] Firewall Kurallari (1433/1434)    |" -ForegroundColor Green }
+        if ($Selections.ConfigSqlProtocols)   { Write-Host "  |  [+] SQL Protokol Yapilandirmasi       |" -ForegroundColor Green }
+        if ($Selections.ConfigSqlPerformance) { Write-Host "  |  [+] SQL Performans Ayarlari           |" -ForegroundColor Green }
+        if ($Selections.InstallNativeClient)  { Write-Host "  |  [+] SQL Native Client 2012            |" -ForegroundColor Green }
         if ($Selections.SetPowerPlan)    { Write-Host "  |  [+] Guc Plani: Nihai Performans       |" -ForegroundColor Green }
         if ($Selections.InstallCapital)  { Write-Host "  |  [+] Bay.T Capital Kurulumu            |" -ForegroundColor Yellow }
         if ($Selections.InstallBoss)     { Write-Host "  |  [+] Bay.T Boss Kurulumu               |" -ForegroundColor Yellow }
@@ -2685,35 +2794,22 @@ function Main {
             Write-Info ".NET Framework atlaniyor (secilmedi)"
         }
 
-        # 5. Disk Sektor Boyutu Fix (SQL oncesi)
-        if ($Selections.ApplySectorFix) {
+        # 5. Disk Sektor Boyutu Kontrolu (SQL oncesi - guvenlik agi)
+        # Not: Sektor fix artik GUI'de SQL checkbox isaretlendiginde uygulanir.
+        # Burasi sadece Silent mod veya beklenmedik durumlar icin guvenlik kontrolu.
+        if ($Selections.ApplySectorFix -and $Selections.InstallSQL) {
+            # Silent modda fix henuz uygulanmamis olabilir, burada uygula
             Write-Step "Disk sektor boyutu duzeltmesi uygulanıyor..."
             Write-Warn "Sistem diskiniz $($Selections.SectorSize) byte sektor boyutuna sahip (SQL Server max 4096 byte destekler)"
             $FixApplied = Set-ForcedPhysicalSectorSize
             if ($FixApplied) {
                 Write-OK "Registry duzeltmesi uygulandi."
                 Write-Warn "ONEMLI: Bu duzeltmenin aktif olmasi icin bilgisayarin yeniden baslatilmasi gerekir!"
-                if ($Selections.InstallSQL) {
-                    Write-Warn "SQL Server kurulumu sektor fix'i aktif olmadan basarisiz olabilir."
-                    Write-Warn "Oneri: Once bilgisayari yeniden baslatin, sonra script'i tekrar calistirin."
-                    Add-Type -AssemblyName System.Windows.Forms
-                    $rebootAnswer = [System.Windows.Forms.MessageBox]::Show(
-                        "Disk sektor boyutu duzeltmesi uygulandi.`n`nBu duzeltmenin aktif olmasi icin bilgisayarin YENIDEN BASLATILMASI gerekir.`nSQL Server kurulumu yeniden baslatma olmadan basarisiz olabilir.`n`nSimdi yeniden baslatmak istiyor musunuz?`n(Script yeniden baslama sonrasi tekrar calistirilmalidir)",
-                        "Yeniden Baslatma Gerekli",
-                        [System.Windows.Forms.MessageBoxButtons]::YesNo,
-                        [System.Windows.Forms.MessageBoxIcon]::Warning
-                    )
-                    if ($rebootAnswer -eq [System.Windows.Forms.DialogResult]::Yes) {
-                        Write-Info "Bilgisayar 10 saniye icinde yeniden baslatilacak..."
-                        Start-Process "shutdown.exe" -ArgumentList "/r /t 10 /c `"Disk sektor fix icin yeniden baslatma - Bayt Support`"" -NoNewWindow
-                        return
-                    } else {
-                        Write-Warn "Yeniden baslatma ertelendi. SQL kurulumuna devam ediliyor (basarisiz olabilir!)..."
-                    }
-                }
+                Write-Warn "SQL Server kurulumu sektor fix'i aktif olmadan basarisiz olabilir."
             }
-        } elseif ($Selections.SectorNeedsFix -and -not $Selections.SectorFixApplied -and $Selections.InstallSQL) {
-            Write-Warn "Disk sektor boyutu ($($Selections.SectorSize) byte) SQL Server ile uyumsuz ama fix uygulanmadi!"
+        } elseif ($Selections.InstallSQL -and $Selections.SectorNeedsFix -and -not $Selections.SectorFixApplied) {
+            Write-Warn "Disk sektor boyutu ($($Selections.SectorSize) byte) SQL Server ile uyumsuz!"
+            Write-Warn "Registry duzeltmesi (ForcedPhysicalSectorSizeInBytes) uygulanmamis."
             Write-Warn "SQL Server kurulumu basarisiz olabilir."
         }
 
@@ -2729,22 +2825,32 @@ function Main {
 
             if ($InstallSuccess) {
                 $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
-                Set-SqlProtocols -InstanceName $SelectedInstance
-                Set-SqlBrowserService
+
+                # SQL protokol yapilandirmasi (kullanici secimi)
+                if ($Selections.ConfigSqlProtocols) {
+                    Set-SqlProtocols -InstanceName $SelectedInstance
+                    Set-SqlBrowserService
+                } else {
+                    Write-Info "SQL Protokol yapilandirmasi atlaniyor (secilmedi)"
+                }
 
                 # Firewall kurallari
                 if ($Selections.InstallFirewall) {
                     Set-SqlFirewallRules -InstanceName $SelectedInstance
                 }
 
-                Restart-SqlService -InstanceName $SelectedInstance
-                $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
-
-                if ($Ready) {
-                    Set-SqlPerformanceConfig -InstanceName $SelectedInstance -Version $SelectedVersion
+                # Protokol degisiklikleri varsa servisi yeniden baslat
+                if ($Selections.ConfigSqlProtocols) {
+                    Restart-SqlService -InstanceName $SelectedInstance
+                    $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
                 }
 
-                Install-NativeClient
+                # SQL performans ayarlari (kullanici secimi)
+                if ($Ready -and $Selections.ConfigSqlPerformance) {
+                    Set-SqlPerformanceConfig -InstanceName $SelectedInstance -Version $SelectedVersion
+                } elseif (-not $Selections.ConfigSqlPerformance) {
+                    Write-Info "SQL Performans ayarlari atlaniyor (secilmedi)"
+                }
 
                 if ($Ready) {
                     Test-FinalConnection -InstanceName $SelectedInstance
@@ -2758,12 +2864,19 @@ function Main {
             Write-Info "SQL Server kurulumu atlaniyor (secilmedi)"
         }
 
-        # 7. Power Plan
+        # 7. SQL Native Client (SQL'den bagimsiz)
+        if ($Selections.InstallNativeClient) {
+            Install-NativeClient
+        } else {
+            Write-Info "SQL Native Client kurulumu atlaniyor (secilmedi)"
+        }
+
+        # 8. Power Plan
         if ($Selections.SetPowerPlan) {
             Set-UltimatePerformancePowerPlan
         }
 
-        # 8. Bay.T Uygulama Kurulumu
+        # 9. Bay.T Uygulama Kurulumu
         if ($Selections.InstallCapital -or $Selections.InstallBoss) {
             Install-BaytApplication -InstallCapital:$Selections.InstallCapital -InstallBoss:$Selections.InstallBoss
         }
