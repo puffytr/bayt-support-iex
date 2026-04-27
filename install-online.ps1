@@ -473,13 +473,32 @@ function Get-InstalledSqlInstances {
                     $RegPath = $_.Value
                     $ServiceName = if ($InstName -eq "MSSQLSERVER") { "MSSQLSERVER" } else { "MSSQL`$$InstName" }
                     $Svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-                    # Edition bilgisini registry'den oku
+                    # Edition ve versiyon bilgisini registry'den oku
                     $SetupReg = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$RegPath\Setup" -ErrorAction SilentlyContinue
                     $Edition = if ($SetupReg -and $SetupReg.Edition) { $SetupReg.Edition -replace ' Edition$','' } else { "Bilinmiyor" }
+                    # Major versiyon numarasini yila donustur
+                    $VersionYear = "Bilinmiyor"
+                    if ($SetupReg -and $SetupReg.Version) {
+                        $MajorVer = [int]($SetupReg.Version -split '\.')[0]
+                        $VersionYear = switch ($MajorVer) {
+                            8  { "2000" }
+                            9  { "2005" }
+                            10 { "2008" }
+                            11 { "2012" }
+                            12 { "2014" }
+                            13 { "2016" }
+                            14 { "2017" }
+                            15 { "2019" }
+                            16 { "2022" }
+                            17 { "2025" }
+                            default { "v$MajorVer" }
+                        }
+                    }
                     $Instances += @{
-                        Name    = $InstName
-                        Status  = if ($Svc) { $Svc.Status.ToString() } else { "Bilinmiyor" }
-                        Edition = $Edition
+                        Name        = $InstName
+                        Status      = if ($Svc) { $Svc.Status.ToString() } else { "Bilinmiyor" }
+                        Edition     = $Edition
+                        VersionYear = $VersionYear
                     }
                 }
         }
@@ -1467,7 +1486,7 @@ function Show-InstallGUI {
 
     # Mevcut SQL Instance bilgisi goster
     if ($ExistingSqlNames.Count -gt 0) {
-        $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) [$($_.Edition)] ($($_.Status))" }) -join ", "
+        $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) [SQL $($_.VersionYear) $($_.Edition)] ($($_.Status))" }) -join ", "
         $lblExistSql = New-Object System.Windows.Forms.Label
         $lblExistSql.Text = "Mevcut instance: $sqlInstStr"
         $lblExistSql.Location = New-Object System.Drawing.Point(15, 228)
