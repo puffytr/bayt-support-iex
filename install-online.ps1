@@ -1,6 +1,6 @@
 # ============================================================================
 # Bayt Support Otomatik Kurulum Scripti (GUI / All-in-One / Web Ready)
-# Versiyon: 5.1
+# Versiyon: 5.4
 # Tarih: 2026
 # ============================================================================
 #
@@ -83,7 +83,7 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 # UYARI: Asagidaki SA sifresi YALNIZCA test/demo amaclidir.
 # Uretim ortaminda mutlaka degistirilmelidir!
 $Script:SAPassword       = "Bay_T252!"
-$Script:ScriptVersion    = "5.3"
+$Script:ScriptVersion    = "5.4"
 # Temp dizini: Kullanici adindaki Turkce karakterler sorun yaratabiliyor (8.3 path)
 # Bu yuzden kullanici profilinden bagimsiz C:\Bay-T\Support-IEX kullaniyoruz
 $Script:TempBase         = "C:\Bay-T\Support-IEX"
@@ -553,39 +553,65 @@ function Uninstall-SqlInstance {
         }
 
         # 3. Setup.exe yolunu bul
+        # instId orneği: MSSQL12.BaytTicariSQL → major sürüm = 12 → Bootstrap klasörü SQL12*
+        # Bu sayede sistemde birden fazla SQL sürümü olsa bile doğru setup.exe seçilir.
         $setupInfo = Get-ItemProperty "$regBase\$instId\Setup" -ErrorAction SilentlyContinue
         $setupPath = $null
 
+        # instId'den major versiyon numarasini cikart (MSSQL12.XXX -> 12)
+        $sqlMajorVer = $null
+        if ($instId -match '^MSSQL(\d+(?:_\d+)?)\.' ) {
+            $sqlMajorVer = $Matches[1] -replace '_','_'   # orn: "12", "10_50"
+        }
+
+        # Versiyon numarasina gore Bootstrap klasor adini belirle
+        $bootstrapFolderName = if ($sqlMajorVer) { "SQL$sqlMajorVer" } else { $null }
+
         if ($setupInfo -and $setupInfo.SqlProgramDir) {
-            $possibleSetup = Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\SQL2*\setup.exe"
-            $setupFiles = Get-ChildItem $possibleSetup -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
-            if ($setupFiles) {
-                $setupPath = $setupFiles[0].FullName
+            if ($bootstrapFolderName) {
+                # Tam versiyon klasorunu hedefle (orn: Setup Bootstrap\SQL12\setup.exe)
+                $exactSetup = Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\$bootstrapFolderName\setup.exe"
+                if (Test-Path $exactSetup) {
+                    $setupPath = $exactSetup
+                } else {
+                    # Wildcard fallback: SQL12* (servis pack alt klasoru olabilir)
+                    $setupFiles = Get-ChildItem (Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\$bootstrapFolderName*\setup.exe") -ErrorAction SilentlyContinue |
+                        Sort-Object FullName -Descending
+                    if ($setupFiles) { $setupPath = $setupFiles[0].FullName }
+                }
+            }
+
+            # Versiyon tespiti basarisiz olduysa son care: SqlProgramDir altinda ara (date'e gore degil, versiyon numarasina gore)
+            if (-not $setupPath) {
+                $allBootstrap = Get-ChildItem (Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\*\setup.exe") -ErrorAction SilentlyContinue |
+                    Sort-Object FullName  # isme gore sirala: SQL12 < SQL15, yani kucukten buyuge
+                # Kurulu instance'in versiyonuna en yakin olanı sec
+                if ($allBootstrap) { $setupPath = $allBootstrap[0].FullName }
             }
         }
 
         # Alternatif: Bootstrap klasorundan bul
         if (-not $setupPath) {
-            $bootstrapPaths = @(
-                "$regBase\$instId\Setup\BootstrapDir"
-                "$regBase\$instId\Setup\SQLPath"
-            )
-            foreach ($bp in $bootstrapPaths) {
-                $val = (Get-ItemProperty -Path ($bp -replace '\\[^\\]+$','') -Name ($bp -split '\\')[-1] -ErrorAction SilentlyContinue)
-                if ($val) { break }
+            $bootstrapRoot = "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap"
+
+            if ($bootstrapFolderName) {
+                # Once tam versiyon eşleşmesini dene
+                $exactPaths = Get-ChildItem "$bootstrapRoot\$bootstrapFolderName\setup.exe" -ErrorAction SilentlyContinue
+                if (-not $exactPaths) {
+                    $exactPaths = Get-ChildItem "$bootstrapRoot\$bootstrapFolderName*\setup.exe" -ErrorAction SilentlyContinue
+                }
+                if ($exactPaths) { $setupPath = ($exactPaths | Sort-Object FullName -Descending | Select-Object -First 1).FullName }
             }
 
-            # Setup Bootstrap altinda ara
-            $commonPaths = @(
-                "C:\SQL2*\setup.exe",
-                "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\SQL*\setup.exe",
-                "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\setup.exe"
-            )
-            foreach ($cp in $commonPaths) {
-                $found = Get-ChildItem $cp -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-                if ($found) {
-                    $setupPath = $found.FullName
-                    break
+            # Hala bulunamadiysa CommonFiles Bootstrap'e bak (2014 ve öncesi farklı path kullanir)
+            if (-not $setupPath) {
+                $legacyPaths = @(
+                    "C:\Program Files\Microsoft SQL Server\120\Setup Bootstrap\SQLServer2014\setup.exe",
+                    "C:\Program Files\Microsoft SQL Server\110\Setup Bootstrap\SQLServer2012\setup.exe",
+                    "C:\Program Files\Microsoft SQL Server\100\Setup Bootstrap\SQLServer2008R2\setup.exe"
+                )
+                foreach ($lp in $legacyPaths) {
+                    if (Test-Path $lp) { $setupPath = $lp; break }
                 }
             }
         }
@@ -640,7 +666,44 @@ function Uninstall-SqlInstance {
         Write-Info "Setup yolu: $setupPath"
         Write-Info "Instance '$InstanceName' kaldiriliyor (bu islem birkac dakika surebilir)..."
 
-        $setupArgs = "/ACTION=Uninstall /INSTANCENAME=$InstanceName /FEATURES=SQLENGINE /QS"
+        # Kurulu feature listesini registry'den oku; bulunamazsa guvenli varsayilana don
+        $installedFeatures = $null
+        try {
+            $featKey = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instId\ConfigurationState" -ErrorAction SilentlyContinue
+            $featureList = @()
+            if ($featKey) {
+                # Her property'de 1 = kurulu
+                $featMap = @{
+                    SQL_Engine_Core_Inst   = "SQLENGINE"
+                    SQL_Replication        = "REPLICATION"
+                    SQL_FullText           = "FULLTEXT"
+                    SQL_DQ                 = "DQ"
+                    SQL_Polybase           = "POLYBASE"
+                    AS_Engine              = "AS"
+                    RS_Server              = "RS"
+                    IS_Server              = "IS"
+                    MDS_Server             = "MDS"
+                    Tools_Legacy           = "CONN"
+                    SDK                    = "SDK"
+                    SNAC_SDK               = "SNAC_SDK"
+                }
+                foreach ($kv in $featMap.GetEnumerator()) {
+                    if ($featKey.($kv.Key) -eq 1) { $featureList += $kv.Value }
+                }
+            }
+            if ($featureList.Count -gt 0) {
+                $installedFeatures = $featureList -join ","
+                Write-Info "Tespit edilen feature'lar: $installedFeatures"
+            }
+        } catch {}
+
+        # Feature listesi tespit edilemezse SQLENGINE ile devam et
+        if (-not $installedFeatures) {
+            $installedFeatures = "SQLENGINE"
+            Write-Warn "Feature listesi tespit edilemedi, varsayilan kullaniliyor: $installedFeatures"
+        }
+
+        $setupArgs = "/ACTION=Uninstall /INSTANCENAME=$InstanceName /FEATURES=$installedFeatures /QS"
 
         $proc = Start-Process -FilePath $setupPath -ArgumentList $setupArgs -Wait -PassThru -ErrorAction Stop
 
@@ -1225,6 +1288,8 @@ function Show-InstallGUI {
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
+    # Kucuk ekranlarda icerik sigmadigi zaman dikey scrollbar goster
+    $form.AutoScroll = $true
 
     $y = 15
 
@@ -1810,8 +1875,15 @@ function Show-InstallGUI {
     $btnCancel.Cursor = [System.Windows.Forms.Cursors]::Hand
     $form.Controls.Add($btnCancel)
 
-    # Form boyutunu ayarla
-    $form.ClientSize = New-Object System.Drawing.Size(524, ($y + 55))
+    # Form boyutunu ayarla: icerik yuksekligi ekrana siginiyorsa dogal boyut,
+    # siginmiyorsa ekran yuksekligine gore sinirla ve AutoScroll devreye girer
+    $screenWorkArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $desiredHeight  = $y + 55
+    $maxFormHeight  = $screenWorkArea.Height - 40   # 40px taskbar + marjin payı
+    $formHeight     = [Math]::Min($desiredHeight, $maxFormHeight)
+    $form.ClientSize = New-Object System.Drawing.Size(524, $formHeight)
+    # Yatay scrollbar cikmasin; icerik genisligi sabit tutulsun
+    $form.AutoScrollMinSize = New-Object System.Drawing.Size(524, $desiredHeight)
 
     $form.AcceptButton = $btnInstall
     $form.CancelButton = $btnCancel
