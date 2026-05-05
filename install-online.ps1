@@ -558,35 +558,66 @@ function Uninstall-SqlInstance {
         $setupInfo = Get-ItemProperty "$regBase\$instId\Setup" -ErrorAction SilentlyContinue
         $setupPath = $null
 
-        # instId'den major versiyon numarasini cikart (MSSQL12.XXX -> 12)
+        # instId'den major versiyon numarasini cikart (MSSQL12.XXX -> 12, MSSQL16.XXX -> 16)
         $sqlMajorVer = $null
         if ($instId -match '^MSSQL(\d+(?:_\d+)?)\.' ) {
-            $sqlMajorVer = $Matches[1] -replace '_','_'   # orn: "12", "10_50"
+            $sqlMajorVer = $Matches[1] -replace '_','_'   # orn: "12", "10_50", "16"
         }
 
-        # Versiyon numarasina gore Bootstrap klasor adini belirle
-        $bootstrapFolderName = if ($sqlMajorVer) { "SQL$sqlMajorVer" } else { $null }
+        # SQL versiyonuna gore Bootstrap klasor adi adaylari
+        # SQL 2017+ yil bazli isimlendirme kullanir (SQL2022), eskiler numara/SQLServerXXXX kullanir
+        # Oncelikli aday once denenir, bulunamazsa diger adaya gecilir
+        $bootstrapFolderCandidates = @()
+        switch ($sqlMajorVer) {
+            "10_50" { $bootstrapFolderCandidates = @("SQL2008R2", "SQL10_50") }
+            "11"    { $bootstrapFolderCandidates = @("SQL2012",   "SQLServer2012") }
+            "12"    { $bootstrapFolderCandidates = @("SQLServer2014", "SQL12") }
+            "13"    { $bootstrapFolderCandidates = @("SQLServer2016", "SQL13") }
+            "14"    { $bootstrapFolderCandidates = @("SQL2017",  "SQL14") }
+            "15"    { $bootstrapFolderCandidates = @("SQL2019",  "SQL15") }
+            "16"    { $bootstrapFolderCandidates = @("SQL2022",  "SQL16") }
+            "17"    { $bootstrapFolderCandidates = @("SQL2025",  "SQL17") }
+            default { if ($sqlMajorVer) { $bootstrapFolderCandidates = @("SQL$sqlMajorVer") } }
+        }
+
+        # Instance dizin numarasini hesapla (orn: MSSQL16 -> 160, MSSQL15 -> 150)
+        # Bu deger versiyon-aware fallback icin kullanilir
+        $instDirNum = $null
+        if ($sqlMajorVer -match '^\d+$') {
+            $instDirNum = [int]$sqlMajorVer * 10
+        } elseif ($sqlMajorVer -eq '10_50') {
+            $instDirNum = 100
+        }
 
         if ($setupInfo -and $setupInfo.SqlProgramDir) {
-            if ($bootstrapFolderName) {
-                # Tam versiyon klasorunu hedefle (orn: Setup Bootstrap\SQL12\setup.exe)
-                $exactSetup = Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\$bootstrapFolderName\setup.exe"
-                if (Test-Path $exactSetup) {
-                    $setupPath = $exactSetup
-                } else {
-                    # Wildcard fallback: SQL12* (servis pack alt klasoru olabilir)
-                    $setupFiles = Get-ChildItem (Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\$bootstrapFolderName*\setup.exe") -ErrorAction SilentlyContinue |
+            if ($bootstrapFolderCandidates.Count -gt 0) {
+                # Tum aday klasor isimlerini sirayla dene
+                foreach ($candidate in $bootstrapFolderCandidates) {
+                    $exactSetup = Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\$candidate\setup.exe"
+                    if (Test-Path $exactSetup) {
+                        $setupPath = $exactSetup
+                        break
+                    }
+                    # Wildcard fallback: servis pack alt klasoru olabilir (orn: SQL2022_CU*)
+                    $setupFiles = Get-ChildItem (Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\$candidate*\setup.exe") -ErrorAction SilentlyContinue |
                         Sort-Object FullName -Descending
-                    if ($setupFiles) { $setupPath = $setupFiles[0].FullName }
+                    if ($setupFiles) { $setupPath = $setupFiles[0].FullName; break }
                 }
             }
 
-            # Versiyon tespiti basarisiz olduysa son care: SqlProgramDir altinda ara (date'e gore degil, versiyon numarasina gore)
+            # Klasor adi eslesmezse: dogru versiyon dizinine (\160\, \150\ gibi) gore sec
             if (-not $setupPath) {
                 $allBootstrap = Get-ChildItem (Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\*\setup.exe") -ErrorAction SilentlyContinue |
-                    Sort-Object FullName  # isme gore sirala: SQL12 < SQL15, yani kucukten buyuge
-                # Kurulu instance'in versiyonuna en yakin olanı sec
-                if ($allBootstrap) { $setupPath = $allBootstrap[0].FullName }
+                    Sort-Object FullName
+                if ($allBootstrap) {
+                    if ($instDirNum) {
+                        # Dogru versiyon dizinini icerenlerden ilkini al (orn: \160\)
+                        $matched = $allBootstrap | Where-Object { $_.FullName -match "\\$instDirNum\\" }
+                        $setupPath = if ($matched) { ($matched | Select-Object -First 1).FullName } else { $allBootstrap[0].FullName }
+                    } else {
+                        $setupPath = $allBootstrap[0].FullName
+                    }
+                }
             }
         }
 
@@ -594,18 +625,33 @@ function Uninstall-SqlInstance {
         if (-not $setupPath) {
             $bootstrapRoot = "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap"
 
-            if ($bootstrapFolderName) {
-                # Once tam versiyon eşleşmesini dene
-                $exactPaths = Get-ChildItem "$bootstrapRoot\$bootstrapFolderName\setup.exe" -ErrorAction SilentlyContinue
-                if (-not $exactPaths) {
-                    $exactPaths = Get-ChildItem "$bootstrapRoot\$bootstrapFolderName*\setup.exe" -ErrorAction SilentlyContinue
+            if ($bootstrapFolderCandidates.Count -gt 0) {
+                foreach ($candidate in $bootstrapFolderCandidates) {
+                    $exactPaths = Get-ChildItem "$bootstrapRoot\$candidate\setup.exe" -ErrorAction SilentlyContinue
+                    if (-not $exactPaths) {
+                        $exactPaths = Get-ChildItem "$bootstrapRoot\$candidate*\setup.exe" -ErrorAction SilentlyContinue
+                    }
+                    if ($exactPaths) {
+                        $setupPath = ($exactPaths | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+                        break
+                    }
                 }
-                if ($exactPaths) { $setupPath = ($exactPaths | Sort-Object FullName -Descending | Select-Object -First 1).FullName }
             }
 
-            # Hala bulunamadiysa CommonFiles Bootstrap'e bak (2014 ve öncesi farklı path kullanir)
+            # Hala bulunamadiysa versiyon numarasina gore dogru dizinden ara (orn: \160\Setup Bootstrap\)
+            if (-not $setupPath -and $instDirNum) {
+                $versionedPaths = Get-ChildItem "C:\Program Files\Microsoft SQL Server\$instDirNum\Setup Bootstrap\*\setup.exe" -ErrorAction SilentlyContinue
+                if ($versionedPaths) {
+                    $setupPath = ($versionedPaths | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+                }
+            }
+
+            # Son care: bilinen yollar (yeniden eskiye dogru)
             if (-not $setupPath) {
                 $legacyPaths = @(
+                    "C:\Program Files\Microsoft SQL Server\160\Setup Bootstrap\SQL2022\setup.exe",
+                    "C:\Program Files\Microsoft SQL Server\150\Setup Bootstrap\SQL2019\setup.exe",
+                    "C:\Program Files\Microsoft SQL Server\140\Setup Bootstrap\SQL2017\setup.exe",
                     "C:\Program Files\Microsoft SQL Server\120\Setup Bootstrap\SQLServer2014\setup.exe",
                     "C:\Program Files\Microsoft SQL Server\110\Setup Bootstrap\SQLServer2012\setup.exe",
                     "C:\Program Files\Microsoft SQL Server\100\Setup Bootstrap\SQLServer2008R2\setup.exe"
