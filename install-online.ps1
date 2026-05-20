@@ -88,8 +88,8 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 # Win10/Win11 istemci isletim sistemlerinde genellikle pasiftir.
 # - Karmasiklik aktif  → "Bay_T252!" (buyuk/kucuk harf + rakam + ozel karakter)
 # - Karmasiklik pasif  → "bayt"       (yalnizca minimum uzunluk kosulu aranir)
+$Script:PasswordComplexityEnabled = $false
 $Script:SAPassword = & {
-    $ComplexityEnabled = $false
     try {
         # Sistem temp klasoru kullanilir (Turkce karakter sorununu onlemek icin kullanici profili yerine)
         $TmpCfg = "C:\Windows\Temp\bayt_secpol_$([System.IO.Path]::GetRandomFileName()).cfg"
@@ -99,12 +99,12 @@ $Script:SAPassword = & {
             Remove-Item $TmpCfg -Force -ErrorAction SilentlyContinue
             $ComplexLine = $PolicyLines | Where-Object { $_ -match '^\s*PasswordComplexity\s*=' }
             if ($ComplexLine -match '=\s*(\d+)') {
-                $ComplexityEnabled = [int]$Matches[1] -eq 1
+                $Script:PasswordComplexityEnabled = [int]$Matches[1] -eq 1
             }
         }
     } catch { }
 
-    if ($ComplexityEnabled) {
+    if ($Script:PasswordComplexityEnabled) {
         # Karmasiklik politikasi aktif: ozel karakter + buyuk/kucuk harf + rakam iceren sifre
         "Bay_T252!"
     } else {
@@ -2024,19 +2024,25 @@ function Show-InstallGUI {
             }
         }
 
-        # SA sifre karmasiklik kontrolu
+        # SA sifre kontrolu — karmasiklik politikasina gore kosullar uygulanir
         if ($chkSQL.Checked) {
             $pwd = $txtPassword.Text
             $pwdErrors = @()
-            if ($pwd.Length -lt 8) { $pwdErrors += "- En az 8 karakter olmali" }
-            if ($pwd -cnotmatch '[A-Z]') { $pwdErrors += "- En az 1 buyuk harf icermeli (A-Z)" }
-            if ($pwd -cnotmatch '[a-z]') { $pwdErrors += "- En az 1 kucuk harf icermeli (a-z)" }
-            if ($pwd -notmatch '[0-9]') { $pwdErrors += "- En az 1 rakam icermeli (0-9)" }
-            if ($pwd -notmatch '[^A-Za-z0-9]') { $pwdErrors += "- En az 1 ozel karakter icermeli (!@#$%)" }
+            if ($Script:PasswordComplexityEnabled) {
+                # Karmasiklik politikasi aktif: SQL Server standart gereksinimleri
+                if ($pwd.Length -lt 8)               { $pwdErrors += "- En az 8 karakter olmali" }
+                if ($pwd -cnotmatch '[A-Z]')          { $pwdErrors += "- En az 1 buyuk harf icermeli (A-Z)" }
+                if ($pwd -cnotmatch '[a-z]')          { $pwdErrors += "- En az 1 kucuk harf icermeli (a-z)" }
+                if ($pwd -notmatch '[0-9]')           { $pwdErrors += "- En az 1 rakam icermeli (0-9)" }
+                if ($pwd -notmatch '[^A-Za-z0-9]')   { $pwdErrors += "- En az 1 ozel karakter icermeli (!@#$%)" }
+            } else {
+                # Karmasiklik politikasi pasif: yalnizca bos olmamasini kontrol et
+                if ($pwd.Length -lt 1) { $pwdErrors += "- Sifre bos birakilamaz" }
+            }
             if ($pwdErrors.Count -gt 0) {
                 [System.Windows.Forms.MessageBox]::Show(
-                    "SA sifresi SQL Server gereksinimlerini karsilamiyor:`n`n" + ($pwdErrors -join "`n") + "`n`nGuclu bir sifre girin.",
-                    "Zayif Sifre",
+                    "SA sifresi gecersiz:`n`n" + ($pwdErrors -join "`n"),
+                    "Gecersiz Sifre",
                     [System.Windows.Forms.MessageBoxButtons]::OK,
                     [System.Windows.Forms.MessageBoxIcon]::Warning
                 )
