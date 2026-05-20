@@ -1,6 +1,6 @@
 # ============================================================================
 # Bayt Support Otomatik Kurulum Scripti (GUI / All-in-One / Web Ready)
-# Versiyon: 5.4
+# Versiyon: 5.5
 # Tarih: 2026
 # ============================================================================
 #
@@ -82,8 +82,37 @@ catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]
 # ============================================================================
 # UYARI: Asagidaki SA sifresi YALNIZCA test/demo amaclidir.
 # Uretim ortaminda mutlaka degistirilmelidir!
-$Script:SAPassword       = "Bay_T252!"
-$Script:ScriptVersion    = "5.4"
+
+# Windows sifre politikasi kontrol edilerek varsayilan SA sifresi belirleniyor.
+# Sunucu isletim sistemlerinde karmasiklik politikasi varsayilan olarak aktiftir;
+# Win10/Win11 istemci isletim sistemlerinde genellikle pasiftir.
+# - Karmasiklik aktif  → "Bay_T252!" (buyuk/kucuk harf + rakam + ozel karakter)
+# - Karmasiklik pasif  → "bayt"       (yalnizca minimum uzunluk kosulu aranir)
+$Script:SAPassword = & {
+    $ComplexityEnabled = $false
+    try {
+        # Sistem temp klasoru kullanilir (Turkce karakter sorununu onlemek icin kullanici profili yerine)
+        $TmpCfg = "C:\Windows\Temp\bayt_secpol_$([System.IO.Path]::GetRandomFileName()).cfg"
+        $null = & secedit /export /cfg $TmpCfg /quiet 2>&1
+        if (Test-Path $TmpCfg) {
+            $PolicyLines = Get-Content $TmpCfg -ErrorAction SilentlyContinue
+            Remove-Item $TmpCfg -Force -ErrorAction SilentlyContinue
+            $ComplexLine = $PolicyLines | Where-Object { $_ -match '^\s*PasswordComplexity\s*=' }
+            if ($ComplexLine -match '=\s*(\d+)') {
+                $ComplexityEnabled = [int]$Matches[1] -eq 1
+            }
+        }
+    } catch { }
+
+    if ($ComplexityEnabled) {
+        # Karmasiklik politikasi aktif: ozel karakter + buyuk/kucuk harf + rakam iceren sifre
+        "Bay_T252!"
+    } else {
+        # Karmasiklik politikasi pasif: sade minimum uzunluk yeterli
+        "bayt"
+    }
+}
+$Script:ScriptVersion    = "5.5"
 # Temp dizini: Kullanici adindaki Turkce karakterler sorun yaratabiliyor (8.3 path)
 # Bu yuzden kullanici profilinden bagimsiz C:\Bay-T\Support-IEX kullaniyoruz
 $Script:TempBase         = "C:\Bay-T\Support-IEX"

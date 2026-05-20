@@ -15,7 +15,7 @@ Hangi bilesenleri kurmak istediginizi gorsel arayuzden secin:
 > SQL Server kurulumu **zorunlu degildir**. Sadece C++ ve .NET kurulumu icin de kullanabilirsiniz.
 
 ![GUI](https://img.shields.io/badge/Aray%C3%BCz-Windows%20Forms%20GUI-blue?style=for-the-badge)
-![Version](https://img.shields.io/badge/Versiyon-5.4-green?style=for-the-badge)
+![Version](https://img.shields.io/badge/Versiyon-5.5-green?style=for-the-badge)
 
 ## Hizli Baslangic (Tek Komut)
 
@@ -36,7 +36,7 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  Bayt Support Otomatik Kurulum v5.4              │
+│  Bayt Support Otomatik Kurulum v5.5              │
 │  Kurmak istediginiz bilesenleri secin             │
 │                                                   │
 │  KURULACAK BILESENLER                             │
@@ -85,7 +85,7 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 - SQL Server 2019, 2022, 2025 versiyonlarini destekler
 - **Kurmak zorunda degilsiniz** — GUI'den isaretlemezseniz atlanir
 - **Instance adi validasyonu**: Max 16 karakter, harf ile baslama, ozel karakter kontrolu
-- **SA sifre karmasiklik kontrolu**: Buyuk/kucuk harf, rakam, ozel karakter zorunlu
+  - **SA sifre politikasi**: Windows sifre karmasiklik politikasi aktifse buyuk/kucuk harf + rakam + ozel karakter zorunlu; politika pasifse sade sifre kabul edilir
 - Otomatik sa kullanicisi olusturma
 - Hazir instance isimleri (BaytTicariSQL, BaytBossSQL, Bayt) veya serbest yazi ile ozel isim
 - SQL Native Client 2012 kurulumu (otomatik kontrol)
@@ -253,7 +253,11 @@ Windows 11'de bazi NVMe suruculer 4096 byte'tan buyuk fiziksel sektor boyutu rap
 
 > **SORUMLULUK REDDI:** Bu projede yer alan SA sifreleri, SQL Server product key'leri ve diger kimlik bilgileri **YALNIZCA test, gelistirme ve degerlendirme amaclidir**. Uretim (production) ortaminda kullanilmasi tavsiye edilmez. Product key'ler Microsoft'un kamuya acik degerlendirme anahtarlaridir. Uretim ortami icin Microsoft'tan uygun lisans satin alinmalidir. Script sahibi, lisans ihlalleri veya guvenlik aciklarindan sorumlu tutulamaz.
 
-SA kullanicisinin varsayilan sifresi: `Bay_T252!` *(yalnizca test amacli)*
+SA kullanicisinin varsayilan sifresi Windows sifre karmasiklik politikasina gore belirlenir:
+- **Karmasiklik politikasi aktif** (Windows Server varsayilani): `Bay_T252!`
+- **Karmasiklik politikasi pasif** (Win10/Win11 istemci varsayilani): `bayt`
+
+*(Her iki deger yalnizca test amaclidir)*
 
 > **NOT:** `BaytTicariSQL` veya `BaytBossSQL` instance'lari icin SA sifre degisimi gerekmez. Bayt yazilim setup'lari SQL'e baglanirken bu sifreyi otomatik olarak belirler ve degistirir. Ekstra bir islem yapmaniza gerek yoktur.
 
