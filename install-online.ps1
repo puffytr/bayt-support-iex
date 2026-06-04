@@ -276,9 +276,9 @@ $Script:TlsRegPaths = @(
     'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NETFramework\v4.0.30319'
 )
 
-# Bu fonksiyon kalici TLS 1.2 (StrongCrypto) ayarinin zaten aktif olup olmadigini tespit eder.
-# Deterministik ve idempotent: yalnizca okuma yapar, sistemi degistirmez.
-# Mevcut olan tum .NET 4.x registry yollarinda SchUseStrongCrypto=1 ise $true doner.
+# Bu fonksiyon kalici TLS 1.2 (StrongCrypto + Schannel) ayarinin zaten aktif
+# olup olmadigini tespit eder. Deterministik ve idempotent: yalnizca okuma yapar.
+# Hem .NET 4.x StrongCrypto hem de Schannel TLS 1.2 Client tarafi aktifse $true doner.
 function Test-PermanentTlsEnabled {
     $existingPaths = $Script:TlsRegPaths | Where-Object { Test-Path $_ }
     # Hic .NET 4.x yolu yoksa (cok eski sistem) kalici ayar uygulanamaz say
@@ -287,6 +287,10 @@ function Test-PermanentTlsEnabled {
         $val = (Get-ItemProperty -Path $regPath -Name 'SchUseStrongCrypto' -ErrorAction SilentlyContinue).SchUseStrongCrypto
         if ($val -ne 1) { return $false }
     }
+    # Schannel TLS 1.2 Client tarafi etkin mi? (Enabled=1)
+    $tls12Client = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client'
+    $clientEnabled = (Get-ItemProperty -Path $tls12Client -Name 'Enabled' -ErrorAction SilentlyContinue).Enabled
+    if ($clientEnabled -ne 1) { return $false }
     return $true
 }
 
@@ -296,6 +300,7 @@ function Test-PermanentTlsEnabled {
 # indirmelerindeki "Could not create SSL/TLS secure channel" hatasini onler.
 function Set-PermanentTls {
     $written = $false
+    # --- 1) .NET Framework 4.x StrongCrypto (PowerShell + .NET uygulamalari) ---
     foreach ($regPath in $Script:TlsRegPaths) {
         try {
             if (-not (Test-Path $regPath)) {
@@ -308,6 +313,26 @@ function Set-PermanentTls {
             Write-Warn "TLS registry ayari yazilamadi ($regPath): $($_.Exception.Message)"
         }
     }
+
+    # --- 2) Schannel TLS 1.2 protokolu (sistem geneli / OS Schannel) ---
+    # Server 2012/2012 R2 gibi sistemlerde TLS 1.2 protokolu Schannel'de varsayilan
+    # olarak kapali olabilir. Bu blok hem Client hem Server tarafini etkinlestirir.
+    # Boylece .NET disindaki WinHTTP/Schannel tabanli bilesenler de TLS 1.2 kullanir.
+    $schannelBase = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2'
+    foreach ($role in @('Client','Server')) {
+        $rolePath = Join-Path $schannelBase $role
+        try {
+            if (-not (Test-Path $rolePath)) {
+                New-Item -Path $rolePath -Force -ErrorAction Stop | Out-Null
+            }
+            New-ItemProperty -Path $rolePath -Name 'Enabled'           -Value 1 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+            New-ItemProperty -Path $rolePath -Name 'DisabledByDefault' -Value 0 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+            $written = $true
+        } catch {
+            Write-Warn "Schannel TLS 1.2 ayari yazilamadi ($rolePath): $($_.Exception.Message)"
+        }
+    }
+
     return $written
 }
 
@@ -2796,9 +2821,9 @@ function Main {
 
         # 2.5. Kalici TLS 1.2 (eski OS icin) - secildiyse uygula
         if ($Selections.EnablePermanentTls) {
-            Write-Step "TLS 1.2 kalici olarak etkinlestiriliyor (StrongCrypto)..."
+            Write-Step "TLS 1.2 kalici olarak etkinlestiriliyor (StrongCrypto + Schannel)..."
             if (Set-PermanentTls) {
-                Write-OK "TLS 1.2 kalici ayari uygulandi (.NET 4.x StrongCrypto)"
+                Write-OK "TLS 1.2 kalici ayari uygulandi (.NET 4.x StrongCrypto + Schannel protokolu)"
                 Write-Info "Yeni PowerShell oturumlarinda 'iex (irm ...)' TLS ayari olmadan calisir"
             } else {
                 Write-Warn "TLS kalici ayari uygulanamadi (yonetici izni gerekebilir)"

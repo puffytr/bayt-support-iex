@@ -45,7 +45,9 @@ Bu durumda komutu indirmeden **once** TLS 1.2'yi acin (tek satir, kopyala-yapist
 
 > **Kalici cozum:** Kurulum ekranindaki **"TLS 1.2'yi Kalici Etkinlestir (Eski OS)"**
 > secenegi (TLS aktif degilse varsayilan isaretli gelir; zaten aktifse `[AKTIF]`
-> etiketiyle pasif gosterilir) makineye `.NET StrongCrypto` registry ayarini yazar.
+> etiketiyle pasif gosterilir) makineye iki ayari yazar:
+> **(1)** `.NET 4.x StrongCrypto` — PowerShell ve .NET uygulamalari (Bay.T Capital/Boss) icin,
+> **(2)** `Schannel TLS 1.2` protokolu (Client + Server) — sistem geneli / WinHTTP tabanli bilesenler icin.
 > Bu sayede **sonraki calistirmalarda** sade `iex (irm ...)` komutu TLS satiri
 > olmadan da calisir. (Etkili olmasi icin ayardan sonra yeni bir PowerShell
 > penceresi acmaniz yeterlidir.) Sessiz modda `-EnablePermanentTls` ile uygulanir.
