@@ -1,6 +1,6 @@
 # ============================================================================
 # Bayt Support Otomatik Kurulum Scripti (GUI / All-in-One / Web Ready)
-# Versiyon: 5.5
+# Versiyon: 5.1
 # Tarih: 2026
 # ============================================================================
 #
@@ -32,11 +32,9 @@ param(
     [switch]$InstallSQL,
     [switch]$InstallFirewall,
     [switch]$SetPowerPlan,
-    [switch]$ConfigSqlProtocols,
-    [switch]$ConfigSqlPerformance,
-    [switch]$InstallNativeClient,
     [switch]$InstallCapital,
     [switch]$InstallBoss,
+    [switch]$EnablePermanentTls,
     [string]$SqlVersion = "",
     [string]$InstanceName = "",
     [string]$SAPass = "",
@@ -55,11 +53,9 @@ if ($Help) {
     Write-Host "  -InstallSQL        SQL Server kur"
     Write-Host "  -InstallFirewall   Firewall kurallari olustur"
     Write-Host "  -SetPowerPlan      Guc planini Nihai Performans (Ultimate) yap"
-    Write-Host "  -ConfigSqlProtocols   SQL protokollerini yapilandir (TCP/IP, Named Pipes)"
-    Write-Host "  -ConfigSqlPerformance SQL performans ayarlarini uygula (Max Memory, MAXDOP)"
-    Write-Host "  -InstallNativeClient  SQL Native Client 2012 kur"
     Write-Host "  -InstallCapital    Bay.T Capital kurulumunu indir ve baslat"
     Write-Host "  -InstallBoss       Bay.T Boss kurulumunu indir ve baslat"
+    Write-Host "  -EnablePermanentTls TLS 1.2'yi kalici etkinlestir (eski OS icin)"
     Write-Host "  -SqlVersion        SQL versiyonu (2019/2022/2025)"
     Write-Host "  -InstanceName      SQL instance adi"
     Write-Host "  -SAPass            SA sifresi"
@@ -73,46 +69,44 @@ if ($Help) {
 
 $ErrorActionPreference = "Stop"
 
-# TLS 1.2/1.3 zorunlu (Microsoft download servisleri icin)
-try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13 }
-catch { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 }
+# ============================================================================
+#region TLS / GUVENLIK PROTOKOLU
+# ============================================================================
+# Eski isletim sistemlerinde (Windows 7/8/8.1, Server 2012/2012 R2/2016/2019)
+# .NET ve PowerShell varsayilan olarak TLS 1.0/1.1 kullanir. GitHub ve
+# Microsoft indirme servisleri ise yalnizca TLS 1.2+ kabul eder. Bu yuzden
+# "Could not create SSL/TLS secure channel" hatasi alinir.
+#
+# Asagidaki kod hem mevcut oturum icin (runtime) hem de registry uzerinden
+# kalici olarak (.NET 4.x StrongCrypto) TLS 1.2'yi etkinlestirir.
+
+# --- 1) Mevcut oturum (runtime) icin TLS protokollerini ac ---
+# Tls13 her sistemde tanimli olmayabilir; her seviyeyi ayri ayri ve guvenli ekle
+try {
+    $protocols = [Net.SecurityProtocolType]::Tls12
+    # Tls13 destekleniyorsa ekle (PowerShell 5.1 / yeni .NET)
+    if ([enum]::GetNames([Net.SecurityProtocolType]) -contains 'Tls13') {
+        $protocols = $protocols -bor [Net.SecurityProtocolType]::Tls13
+    }
+    [Net.ServicePointManager]::SecurityProtocol = $protocols
+} catch {
+    # Son care: sadece Tls12
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+}
+
+# --- 2) Kalici cozum: .NET Framework 4.x icin StrongCrypto registry ayari ---
+# NOT: Kalici TLS etkinlestirme (registry) artik otomatik degil; kurulum
+# ekranindaki "TLS 1.2'yi Kalici Etkinlestir" secenegi ile kontrol edilir.
+# Tespit ve uygulama fonksiyonlari: Test-PermanentTlsEnabled / Set-PermanentTls
+#endregion
 
 # ============================================================================
 #region YAPILANDIRMA
 # ============================================================================
 # UYARI: Asagidaki SA sifresi YALNIZCA test/demo amaclidir.
 # Uretim ortaminda mutlaka degistirilmelidir!
-
-# Windows sifre politikasi kontrol edilerek varsayilan SA sifresi belirleniyor.
-# Sunucu isletim sistemlerinde karmasiklik politikasi varsayilan olarak aktiftir;
-# Win10/Win11 istemci isletim sistemlerinde genellikle pasiftir.
-# - Karmasiklik aktif  → "Bay_T252!" (buyuk/kucuk harf + rakam + ozel karakter)
-# - Karmasiklik pasif  → "bayt"       (yalnizca minimum uzunluk kosulu aranir)
-$Script:PasswordComplexityEnabled = $false
-$Script:SAPassword = & {
-    try {
-        # Sistem temp klasoru kullanilir (Turkce karakter sorununu onlemek icin kullanici profili yerine)
-        $TmpCfg = "C:\Windows\Temp\bayt_secpol_$([System.IO.Path]::GetRandomFileName()).cfg"
-        $null = & secedit /export /cfg $TmpCfg /quiet 2>&1
-        if (Test-Path $TmpCfg) {
-            $PolicyLines = Get-Content $TmpCfg -ErrorAction SilentlyContinue
-            Remove-Item $TmpCfg -Force -ErrorAction SilentlyContinue
-            $ComplexLine = $PolicyLines | Where-Object { $_ -match '^\s*PasswordComplexity\s*=' }
-            if ($ComplexLine -match '=\s*(\d+)') {
-                $Script:PasswordComplexityEnabled = [int]$Matches[1] -eq 1
-            }
-        }
-    } catch { }
-
-    if ($Script:PasswordComplexityEnabled) {
-        # Karmasiklik politikasi aktif: ozel karakter + buyuk/kucuk harf + rakam iceren sifre
-        "Bay_T252!"
-    } else {
-        # Karmasiklik politikasi pasif: sade minimum uzunluk yeterli
-        "bayt"
-    }
-}
-$Script:ScriptVersion    = "5.5"
+$Script:SAPassword       = "Bay_T252!"
+$Script:ScriptVersion    = "5.2"
 # Temp dizini: Kullanici adindaki Turkce karakterler sorun yaratabiliyor (8.3 path)
 # Bu yuzden kullanici profilinden bagimsiz C:\Bay-T\Support-IEX kullaniyoruz
 $Script:TempBase         = "C:\Bay-T\Support-IEX"
@@ -275,6 +269,47 @@ function Write-OK   { param([string]$Msg) Write-Host "   [OK] $Msg" -ForegroundC
 function Write-Info { param([string]$Msg) Write-Host "   [i]  $Msg" -ForegroundColor Cyan }
 function Write-Warn { param([string]$Msg) Write-Host "   [!]  $Msg" -ForegroundColor Yellow }
 function Write-Err  { param([string]$Msg) Write-Host "   [X]  $Msg" -ForegroundColor Red }
+
+# .NET Framework 4.x StrongCrypto (kalici TLS 1.2) registry yollari
+$Script:TlsRegPaths = @(
+    'HKLM:\SOFTWARE\Microsoft\.NETFramework\v4.0.30319',
+    'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NETFramework\v4.0.30319'
+)
+
+# Bu fonksiyon kalici TLS 1.2 (StrongCrypto) ayarinin zaten aktif olup olmadigini tespit eder.
+# Deterministik ve idempotent: yalnizca okuma yapar, sistemi degistirmez.
+# Mevcut olan tum .NET 4.x registry yollarinda SchUseStrongCrypto=1 ise $true doner.
+function Test-PermanentTlsEnabled {
+    $existingPaths = $Script:TlsRegPaths | Where-Object { Test-Path $_ }
+    # Hic .NET 4.x yolu yoksa (cok eski sistem) kalici ayar uygulanamaz say
+    if (-not $existingPaths -or $existingPaths.Count -eq 0) { return $false }
+    foreach ($regPath in $existingPaths) {
+        $val = (Get-ItemProperty -Path $regPath -Name 'SchUseStrongCrypto' -ErrorAction SilentlyContinue).SchUseStrongCrypto
+        if ($val -ne 1) { return $false }
+    }
+    return $true
+}
+
+# Bu fonksiyon kalici TLS 1.2'yi (.NET 4.x StrongCrypto) registry'ye yazar.
+# Idempotent: tekrar calistirmak zararsizdir. Basari durumunda $true doner.
+# Eski OS'larda (Win7/8/8.1, Server 2012/2012R2/2016/2019) GitHub/Microsoft
+# indirmelerindeki "Could not create SSL/TLS secure channel" hatasini onler.
+function Set-PermanentTls {
+    $written = $false
+    foreach ($regPath in $Script:TlsRegPaths) {
+        try {
+            if (-not (Test-Path $regPath)) {
+                New-Item -Path $regPath -Force -ErrorAction Stop | Out-Null
+            }
+            New-ItemProperty -Path $regPath -Name 'SchUseStrongCrypto'       -Value 1 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+            New-ItemProperty -Path $regPath -Name 'SystemDefaultTlsVersions'  -Value 1 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+            $written = $true
+        } catch {
+            Write-Warn "TLS registry ayari yazilamadi ($regPath): $($_.Exception.Message)"
+        }
+    }
+    return $written
+}
 
 # ADO.NET tabanli SQL sorgusu - Invoke-Sqlcmd'ye bagimliligi kaldirir
 function Invoke-SqlNonQuery {
@@ -502,32 +537,13 @@ function Get-InstalledSqlInstances {
                     $RegPath = $_.Value
                     $ServiceName = if ($InstName -eq "MSSQLSERVER") { "MSSQLSERVER" } else { "MSSQL`$$InstName" }
                     $Svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-                    # Edition ve versiyon bilgisini registry'den oku
+                    # Edition bilgisini registry'den oku
                     $SetupReg = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$RegPath\Setup" -ErrorAction SilentlyContinue
                     $Edition = if ($SetupReg -and $SetupReg.Edition) { $SetupReg.Edition -replace ' Edition$','' } else { "Bilinmiyor" }
-                    # Major versiyon numarasini yila donustur
-                    $VersionYear = "Bilinmiyor"
-                    if ($SetupReg -and $SetupReg.Version) {
-                        $MajorVer = [int]($SetupReg.Version -split '\.')[0]
-                        $VersionYear = switch ($MajorVer) {
-                            8  { "2000" }
-                            9  { "2005" }
-                            10 { "2008" }
-                            11 { "2012" }
-                            12 { "2014" }
-                            13 { "2016" }
-                            14 { "2017" }
-                            15 { "2019" }
-                            16 { "2022" }
-                            17 { "2025" }
-                            default { "v$MajorVer" }
-                        }
-                    }
                     $Instances += @{
-                        Name        = $InstName
-                        Status      = if ($Svc) { $Svc.Status.ToString() } else { "Bilinmiyor" }
-                        Edition     = $Edition
-                        VersionYear = $VersionYear
+                        Name    = $InstName
+                        Status  = if ($Svc) { $Svc.Status.ToString() } else { "Bilinmiyor" }
+                        Edition = $Edition
                     }
                 }
         }
@@ -582,111 +598,39 @@ function Uninstall-SqlInstance {
         }
 
         # 3. Setup.exe yolunu bul
-        # instId orneği: MSSQL12.BaytTicariSQL → major sürüm = 12 → Bootstrap klasörü SQL12*
-        # Bu sayede sistemde birden fazla SQL sürümü olsa bile doğru setup.exe seçilir.
         $setupInfo = Get-ItemProperty "$regBase\$instId\Setup" -ErrorAction SilentlyContinue
         $setupPath = $null
 
-        # instId'den major versiyon numarasini cikart (MSSQL12.XXX -> 12, MSSQL16.XXX -> 16)
-        $sqlMajorVer = $null
-        if ($instId -match '^MSSQL(\d+(?:_\d+)?)\.' ) {
-            $sqlMajorVer = $Matches[1] -replace '_','_'   # orn: "12", "10_50", "16"
-        }
-
-        # SQL versiyonuna gore Bootstrap klasor adi adaylari
-        # SQL 2017+ yil bazli isimlendirme kullanir (SQL2022), eskiler numara/SQLServerXXXX kullanir
-        # Oncelikli aday once denenir, bulunamazsa diger adaya gecilir
-        $bootstrapFolderCandidates = @()
-        switch ($sqlMajorVer) {
-            "10_50" { $bootstrapFolderCandidates = @("SQL2008R2", "SQL10_50") }
-            "11"    { $bootstrapFolderCandidates = @("SQL2012",   "SQLServer2012") }
-            "12"    { $bootstrapFolderCandidates = @("SQLServer2014", "SQL12") }
-            "13"    { $bootstrapFolderCandidates = @("SQLServer2016", "SQL13") }
-            "14"    { $bootstrapFolderCandidates = @("SQL2017",  "SQL14") }
-            "15"    { $bootstrapFolderCandidates = @("SQL2019",  "SQL15") }
-            "16"    { $bootstrapFolderCandidates = @("SQL2022",  "SQL16") }
-            "17"    { $bootstrapFolderCandidates = @("SQL2025",  "SQL17") }
-            default { if ($sqlMajorVer) { $bootstrapFolderCandidates = @("SQL$sqlMajorVer") } }
-        }
-
-        # Instance dizin numarasini hesapla (orn: MSSQL16 -> 160, MSSQL15 -> 150)
-        # Bu deger versiyon-aware fallback icin kullanilir
-        $instDirNum = $null
-        if ($sqlMajorVer -match '^\d+$') {
-            $instDirNum = [int]$sqlMajorVer * 10
-        } elseif ($sqlMajorVer -eq '10_50') {
-            $instDirNum = 100
-        }
-
         if ($setupInfo -and $setupInfo.SqlProgramDir) {
-            if ($bootstrapFolderCandidates.Count -gt 0) {
-                # Tum aday klasor isimlerini sirayla dene
-                foreach ($candidate in $bootstrapFolderCandidates) {
-                    $exactSetup = Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\$candidate\setup.exe"
-                    if (Test-Path $exactSetup) {
-                        $setupPath = $exactSetup
-                        break
-                    }
-                    # Wildcard fallback: servis pack alt klasoru olabilir (orn: SQL2022_CU*)
-                    $setupFiles = Get-ChildItem (Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\$candidate*\setup.exe") -ErrorAction SilentlyContinue |
-                        Sort-Object FullName -Descending
-                    if ($setupFiles) { $setupPath = $setupFiles[0].FullName; break }
-                }
-            }
-
-            # Klasor adi eslesmezse: dogru versiyon dizinine (\160\, \150\ gibi) gore sec
-            if (-not $setupPath) {
-                $allBootstrap = Get-ChildItem (Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\*\setup.exe") -ErrorAction SilentlyContinue |
-                    Sort-Object FullName
-                if ($allBootstrap) {
-                    if ($instDirNum) {
-                        # Dogru versiyon dizinini icerenlerden ilkini al (orn: \160\)
-                        $matched = $allBootstrap | Where-Object { $_.FullName -match "\\$instDirNum\\" }
-                        $setupPath = if ($matched) { ($matched | Select-Object -First 1).FullName } else { $allBootstrap[0].FullName }
-                    } else {
-                        $setupPath = $allBootstrap[0].FullName
-                    }
-                }
+            $possibleSetup = Join-Path $setupInfo.SqlProgramDir "Setup Bootstrap\SQL2*\setup.exe"
+            $setupFiles = Get-ChildItem $possibleSetup -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
+            if ($setupFiles) {
+                $setupPath = $setupFiles[0].FullName
             }
         }
 
         # Alternatif: Bootstrap klasorundan bul
         if (-not $setupPath) {
-            $bootstrapRoot = "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap"
-
-            if ($bootstrapFolderCandidates.Count -gt 0) {
-                foreach ($candidate in $bootstrapFolderCandidates) {
-                    $exactPaths = Get-ChildItem "$bootstrapRoot\$candidate\setup.exe" -ErrorAction SilentlyContinue
-                    if (-not $exactPaths) {
-                        $exactPaths = Get-ChildItem "$bootstrapRoot\$candidate*\setup.exe" -ErrorAction SilentlyContinue
-                    }
-                    if ($exactPaths) {
-                        $setupPath = ($exactPaths | Sort-Object FullName -Descending | Select-Object -First 1).FullName
-                        break
-                    }
-                }
+            $bootstrapPaths = @(
+                "$regBase\$instId\Setup\BootstrapDir"
+                "$regBase\$instId\Setup\SQLPath"
+            )
+            foreach ($bp in $bootstrapPaths) {
+                $val = (Get-ItemProperty -Path ($bp -replace '\\[^\\]+$','') -Name ($bp -split '\\')[-1] -ErrorAction SilentlyContinue)
+                if ($val) { break }
             }
 
-            # Hala bulunamadiysa versiyon numarasina gore dogru dizinden ara (orn: \160\Setup Bootstrap\)
-            if (-not $setupPath -and $instDirNum) {
-                $versionedPaths = Get-ChildItem "C:\Program Files\Microsoft SQL Server\$instDirNum\Setup Bootstrap\*\setup.exe" -ErrorAction SilentlyContinue
-                if ($versionedPaths) {
-                    $setupPath = ($versionedPaths | Sort-Object FullName -Descending | Select-Object -First 1).FullName
-                }
-            }
-
-            # Son care: bilinen yollar (yeniden eskiye dogru)
-            if (-not $setupPath) {
-                $legacyPaths = @(
-                    "C:\Program Files\Microsoft SQL Server\160\Setup Bootstrap\SQL2022\setup.exe",
-                    "C:\Program Files\Microsoft SQL Server\150\Setup Bootstrap\SQL2019\setup.exe",
-                    "C:\Program Files\Microsoft SQL Server\140\Setup Bootstrap\SQL2017\setup.exe",
-                    "C:\Program Files\Microsoft SQL Server\120\Setup Bootstrap\SQLServer2014\setup.exe",
-                    "C:\Program Files\Microsoft SQL Server\110\Setup Bootstrap\SQLServer2012\setup.exe",
-                    "C:\Program Files\Microsoft SQL Server\100\Setup Bootstrap\SQLServer2008R2\setup.exe"
-                )
-                foreach ($lp in $legacyPaths) {
-                    if (Test-Path $lp) { $setupPath = $lp; break }
+            # Setup Bootstrap altinda ara
+            $commonPaths = @(
+                "C:\SQL2*\setup.exe",
+                "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\SQL*\setup.exe",
+                "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\setup.exe"
+            )
+            foreach ($cp in $commonPaths) {
+                $found = Get-ChildItem $cp -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                if ($found) {
+                    $setupPath = $found.FullName
+                    break
                 }
             }
         }
@@ -741,44 +685,7 @@ function Uninstall-SqlInstance {
         Write-Info "Setup yolu: $setupPath"
         Write-Info "Instance '$InstanceName' kaldiriliyor (bu islem birkac dakika surebilir)..."
 
-        # Kurulu feature listesini registry'den oku; bulunamazsa guvenli varsayilana don
-        $installedFeatures = $null
-        try {
-            $featKey = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instId\ConfigurationState" -ErrorAction SilentlyContinue
-            $featureList = @()
-            if ($featKey) {
-                # Her property'de 1 = kurulu
-                $featMap = @{
-                    SQL_Engine_Core_Inst   = "SQLENGINE"
-                    SQL_Replication        = "REPLICATION"
-                    SQL_FullText           = "FULLTEXT"
-                    SQL_DQ                 = "DQ"
-                    SQL_Polybase           = "POLYBASE"
-                    AS_Engine              = "AS"
-                    RS_Server              = "RS"
-                    IS_Server              = "IS"
-                    MDS_Server             = "MDS"
-                    Tools_Legacy           = "CONN"
-                    SDK                    = "SDK"
-                    SNAC_SDK               = "SNAC_SDK"
-                }
-                foreach ($kv in $featMap.GetEnumerator()) {
-                    if ($featKey.($kv.Key) -eq 1) { $featureList += $kv.Value }
-                }
-            }
-            if ($featureList.Count -gt 0) {
-                $installedFeatures = $featureList -join ","
-                Write-Info "Tespit edilen feature'lar: $installedFeatures"
-            }
-        } catch {}
-
-        # Feature listesi tespit edilemezse SQLENGINE ile devam et
-        if (-not $installedFeatures) {
-            $installedFeatures = "SQLENGINE"
-            Write-Warn "Feature listesi tespit edilemedi, varsayilan kullaniliyor: $installedFeatures"
-        }
-
-        $setupArgs = "/ACTION=Uninstall /INSTANCENAME=$InstanceName /FEATURES=$installedFeatures /QS"
+        $setupArgs = "/ACTION=Uninstall /INSTANCENAME=$InstanceName /FEATURES=SQLENGINE /QS"
 
         $proc = Start-Process -FilePath $setupPath -ArgumentList $setupArgs -Wait -PassThru -ErrorAction Stop
 
@@ -1340,16 +1247,6 @@ function Show-InstallGUI {
     }
     $AllVCInstalled = ($VCInstalledCount -eq $VCTotal)
 
-    # SQL Native Client 2012 kurulu mu kontrol et
-    $NativeClientInstalled = $false
-    $NativeClientCheckPaths = @(
-        "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server Native Client 11.0",
-        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Microsoft SQL Server Native Client 11.0"
-    )
-    foreach ($ncPath in $NativeClientCheckPaths) {
-        if (Test-Path $ncPath) { $NativeClientInstalled = $true; break }
-    }
-
     # Kurulu SQL instance isimlerini listele (ArrayList: GUI icerisinden guncellenebilir)
     $ExistingSqlNames = [System.Collections.ArrayList]@()
     if ($ExistingSql -and $ExistingSql.Count -gt 0) {
@@ -1358,13 +1255,11 @@ function Show-InstallGUI {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Bayt Support Otomatik Kurulum v$($Script:ScriptVersion)"
-    $form.Size = New-Object System.Drawing.Size(540, 700)
+    $form.Size = New-Object System.Drawing.Size(540, 600)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
     $form.Font = New-Object System.Drawing.Font("Segoe UI", 9.5)
-    # Kucuk ekranlarda icerik sigmadigi zaman dikey scrollbar goster
-    $form.AutoScroll = $true
 
     $y = 15
 
@@ -1402,7 +1297,6 @@ function Show-InstallGUI {
     if ($AllVCInstalled) {
         $chkVCPP.Text = "Visual C++ Runtimes (2005 - 2022)  [TUMU KURULU]"
         $chkVCPP.Checked = $false
-        $chkVCPP.Enabled = $false
         $chkVCPP.ForeColor = [System.Drawing.Color]::Gray
     } else {
         $vcMissing = $VCTotal - $VCInstalledCount
@@ -1419,7 +1313,6 @@ function Show-InstallGUI {
     if ($DotNetStatus.Net35Installed) {
         $chkNet35.Text = ".NET Framework 3.5  [KURULU]"
         $chkNet35.Checked = $false
-        $chkNet35.Enabled = $false
         $chkNet35.ForeColor = [System.Drawing.Color]::Gray
     } else {
         $chkNet35.Text = ".NET Framework 3.5  [KURULU DEGIL]"
@@ -1435,7 +1328,6 @@ function Show-InstallGUI {
     if ($DotNetStatus.Net481Installed) {
         $chkNet481.Text = ".NET Framework 4.8.1  [KURULU]"
         $chkNet481.Checked = $false
-        $chkNet481.Enabled = $false
         $chkNet481.ForeColor = [System.Drawing.Color]::Gray
     } else {
         $chkNet481.Text = ".NET Framework 4.8.1  [KURULU DEGIL]"
@@ -1446,27 +1338,11 @@ function Show-InstallGUI {
     $chkNet481.Font = $normalFont
     $grpComp.Controls.Add($chkNet481)
 
-    # SQL Native Client 2012 checkbox (SQL'den bagimsiz kurulabilir)
-    $chkNativeClient = New-Object System.Windows.Forms.CheckBox
-    if ($NativeClientInstalled) {
-        $chkNativeClient.Text = "SQL Native Client 2012  [KURULU]"
-        $chkNativeClient.Checked = $false
-        $chkNativeClient.Enabled = $false
-        $chkNativeClient.ForeColor = [System.Drawing.Color]::Gray
-    } else {
-        $chkNativeClient.Text = "SQL Native Client 2012  [KURULU DEGIL]"
-        $chkNativeClient.Checked = $true
-    }
-    $chkNativeClient.Location = New-Object System.Drawing.Point(15, 118)
-    $chkNativeClient.AutoSize = $true
-    $chkNativeClient.Font = $normalFont
-    $grpComp.Controls.Add($chkNativeClient)
-
     # SQL Checkbox
     $chkSQL = New-Object System.Windows.Forms.CheckBox
     $chkSQL.Text = "SQL Server Standard Kurulumu"
     $chkSQL.Checked = $false
-    $chkSQL.Location = New-Object System.Drawing.Point(15, 152)
+    $chkSQL.Location = New-Object System.Drawing.Point(15, 122)
     $chkSQL.AutoSize = $true
     $chkSQL.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
     $chkSQL.ForeColor = [System.Drawing.Color]::FromArgb(0, 100, 200)
@@ -1476,7 +1352,7 @@ function Show-InstallGUI {
     $chkPowerPlan = New-Object System.Windows.Forms.CheckBox
     $chkPowerPlan.Text = "Guc Planini Nihai Performans (Ultimate) Yap"
     $chkPowerPlan.Checked = $true
-    $chkPowerPlan.Location = New-Object System.Drawing.Point(15, 182)
+    $chkPowerPlan.Location = New-Object System.Drawing.Point(15, 152)
     $chkPowerPlan.AutoSize = $true
     $chkPowerPlan.Font = $normalFont
     $grpComp.Controls.Add($chkPowerPlan)
@@ -1485,7 +1361,7 @@ function Show-InstallGUI {
     $chkCapital = New-Object System.Windows.Forms.CheckBox
     $chkCapital.Text = "Bay.T Capital Kurulumunu Indir ve Baslat"
     $chkCapital.Checked = $false
-    $chkCapital.Location = New-Object System.Drawing.Point(15, 212)
+    $chkCapital.Location = New-Object System.Drawing.Point(15, 182)
     $chkCapital.AutoSize = $true
     $chkCapital.Font = $normalFont
     $chkCapital.ForeColor = [System.Drawing.Color]::FromArgb(180, 80, 0)
@@ -1494,7 +1370,7 @@ function Show-InstallGUI {
     $chkBoss = New-Object System.Windows.Forms.CheckBox
     $chkBoss.Text = "Bay.T Boss Kurulumunu Indir ve Baslat"
     $chkBoss.Checked = $false
-    $chkBoss.Location = New-Object System.Drawing.Point(280, 212)
+    $chkBoss.Location = New-Object System.Drawing.Point(280, 182)
     $chkBoss.AutoSize = $true
     $chkBoss.Font = $normalFont
     $chkBoss.ForeColor = [System.Drawing.Color]::FromArgb(180, 80, 0)
@@ -1508,10 +1384,30 @@ function Show-InstallGUI {
         if ($chkBoss.Checked) { $chkCapital.Checked = $false }
     })
 
+    # TLS 1.2 Kalici Etkinlestirme Checkbox + durum
+    # Eski OS'larda (Win7/8/8.1, Server 2012-2019) indirme hatalarini onler.
+    $tlsAlreadyEnabled = Test-PermanentTlsEnabled
+    $chkTls = New-Object System.Windows.Forms.CheckBox
+    if ($tlsAlreadyEnabled) {
+        # Zaten aktif: isaretsiz + disabled (kullanici degistiremez)
+        $chkTls.Text = "TLS 1.2'yi Kalici Etkinlestir (Eski OS)  [AKTIF]"
+        $chkTls.Checked = $false
+        $chkTls.Enabled = $false
+        $chkTls.ForeColor = [System.Drawing.Color]::Gray
+    } else {
+        # Aktif degil: varsayilan isaretli
+        $chkTls.Text = "TLS 1.2'yi Kalici Etkinlestir (Eski OS)"
+        $chkTls.Checked = $true
+    }
+    $chkTls.Location = New-Object System.Drawing.Point(15, 212)
+    $chkTls.AutoSize = $true
+    $chkTls.Font = $normalFont
+    $grpComp.Controls.Add($chkTls)
+
     $y += 262
 
     # --- SQL Ayarlari GroupBox ---
-    $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 275 } else { 238 }
+    $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 215 } else { 178 }
     $grpSql = New-Object System.Windows.Forms.GroupBox
     $grpSql.Text = "SQL Server Ayarlari (SQL secildiginde aktif olur)"
     $grpSql.Location = New-Object System.Drawing.Point(15, $y)
@@ -1527,32 +1423,16 @@ function Show-InstallGUI {
     $lblVer.Font = $normalFont
     $grpSql.Controls.Add($lblVer)
 
-    # Windows surum tespiti: Win10 -> 2019 Express, Win11 -> 2022 Express onerilen
-    $osBuild = [System.Environment]::OSVersion.Version.Build
-    $isWin11 = $osBuild -ge 22000
-
     $cmbVersion = New-Object System.Windows.Forms.ComboBox
-    if ($isWin11) {
-        $cmbVersion.Items.AddRange(@(
-            "SQL Server 2019 Express",
-            "SQL Server 2022 Express (Onerilen)",
-            "SQL Server 2025 Express",
-            "SQL Server 2019 Standard",
-            "SQL Server 2022 Standard",
-            "SQL Server 2025 Standard"
-        ))
-        $cmbVersion.SelectedIndex = 1
-    } else {
-        $cmbVersion.Items.AddRange(@(
-            "SQL Server 2019 Express (Onerilen)",
-            "SQL Server 2022 Express",
-            "SQL Server 2025 Express",
-            "SQL Server 2019 Standard",
-            "SQL Server 2022 Standard",
-            "SQL Server 2025 Standard"
-        ))
-        $cmbVersion.SelectedIndex = 0
-    }
+    $cmbVersion.Items.AddRange(@(
+        "SQL Server 2019 Standard (Onerilen)",
+        "SQL Server 2019 Express",
+        "SQL Server 2022 Standard",
+        "SQL Server 2022 Express",
+        "SQL Server 2025 Standard",
+        "SQL Server 2025 Express"
+    ))
+    $cmbVersion.SelectedIndex = 0
     $cmbVersion.Location = New-Object System.Drawing.Point(115, 29)
     $cmbVersion.Size = New-Object System.Drawing.Size(290, 25)
     $cmbVersion.DropDownStyle = "DropDownList"
@@ -1606,30 +1486,12 @@ function Show-InstallGUI {
     $chkFirewall.Font = $normalFont
     $grpSql.Controls.Add($chkFirewall)
 
-    # SQL Protokol yapilandirmasi checkbox
-    $chkSqlProtocols = New-Object System.Windows.Forms.CheckBox
-    $chkSqlProtocols.Text = "SQL Protokollerini Yapilandir (TCP/IP, Named Pipes, Browser)"
-    $chkSqlProtocols.Checked = $true
-    $chkSqlProtocols.Location = New-Object System.Drawing.Point(15, 165)
-    $chkSqlProtocols.AutoSize = $true
-    $chkSqlProtocols.Font = $normalFont
-    $grpSql.Controls.Add($chkSqlProtocols)
-
-    # SQL Performans ayarlari checkbox
-    $chkSqlPerformance = New-Object System.Windows.Forms.CheckBox
-    $chkSqlPerformance.Text = "SQL Performans Ayarlarini Uygula (Max Memory, MAXDOP)"
-    $chkSqlPerformance.Checked = $true
-    $chkSqlPerformance.Location = New-Object System.Drawing.Point(15, 195)
-    $chkSqlPerformance.AutoSize = $true
-    $chkSqlPerformance.Font = $normalFont
-    $grpSql.Controls.Add($chkSqlPerformance)
-
     # Mevcut SQL Instance bilgisi goster
     if ($ExistingSqlNames.Count -gt 0) {
-        $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) [SQL $($_.VersionYear) $($_.Edition)] ($($_.Status))" }) -join ", "
+        $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) [$($_.Edition)] ($($_.Status))" }) -join ", "
         $lblExistSql = New-Object System.Windows.Forms.Label
         $lblExistSql.Text = "Mevcut instance: $sqlInstStr"
-        $lblExistSql.Location = New-Object System.Drawing.Point(15, 228)
+        $lblExistSql.Location = New-Object System.Drawing.Point(15, 168)
         $lblExistSql.Size = New-Object System.Drawing.Size(470, 35)
         $lblExistSql.Font = $smallFont
         $lblExistSql.ForeColor = [System.Drawing.Color]::OrangeRed
@@ -1950,15 +1812,8 @@ function Show-InstallGUI {
     $btnCancel.Cursor = [System.Windows.Forms.Cursors]::Hand
     $form.Controls.Add($btnCancel)
 
-    # Form boyutunu ayarla: icerik yuksekligi ekrana siginiyorsa dogal boyut,
-    # siginmiyorsa ekran yuksekligine gore sinirla ve AutoScroll devreye girer
-    $screenWorkArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    $desiredHeight  = $y + 55
-    $maxFormHeight  = $screenWorkArea.Height - 40   # 40px taskbar + marjin payı
-    $formHeight     = [Math]::Min($desiredHeight, $maxFormHeight)
-    $form.ClientSize = New-Object System.Drawing.Size(524, $formHeight)
-    # Yatay scrollbar cikmasin; icerik genisligi sabit tutulsun
-    $form.AutoScrollMinSize = New-Object System.Drawing.Size(524, $desiredHeight)
+    # Form boyutunu ayarla
+    $form.ClientSize = New-Object System.Drawing.Size(524, ($y + 55))
 
     $form.AcceptButton = $btnInstall
     $form.CancelButton = $btnCancel
@@ -2024,25 +1879,19 @@ function Show-InstallGUI {
             }
         }
 
-        # SA sifre kontrolu — karmasiklik politikasina gore kosullar uygulanir
+        # SA sifre karmasiklik kontrolu
         if ($chkSQL.Checked) {
             $pwd = $txtPassword.Text
             $pwdErrors = @()
-            if ($Script:PasswordComplexityEnabled) {
-                # Karmasiklik politikasi aktif: SQL Server standart gereksinimleri
-                if ($pwd.Length -lt 8)               { $pwdErrors += "- En az 8 karakter olmali" }
-                if ($pwd -cnotmatch '[A-Z]')          { $pwdErrors += "- En az 1 buyuk harf icermeli (A-Z)" }
-                if ($pwd -cnotmatch '[a-z]')          { $pwdErrors += "- En az 1 kucuk harf icermeli (a-z)" }
-                if ($pwd -notmatch '[0-9]')           { $pwdErrors += "- En az 1 rakam icermeli (0-9)" }
-                if ($pwd -notmatch '[^A-Za-z0-9]')   { $pwdErrors += "- En az 1 ozel karakter icermeli (!@#$%)" }
-            } else {
-                # Karmasiklik politikasi pasif: yalnizca bos olmamasini kontrol et
-                if ($pwd.Length -lt 1) { $pwdErrors += "- Sifre bos birakilamaz" }
-            }
+            if ($pwd.Length -lt 8) { $pwdErrors += "- En az 8 karakter olmali" }
+            if ($pwd -cnotmatch '[A-Z]') { $pwdErrors += "- En az 1 buyuk harf icermeli (A-Z)" }
+            if ($pwd -cnotmatch '[a-z]') { $pwdErrors += "- En az 1 kucuk harf icermeli (a-z)" }
+            if ($pwd -notmatch '[0-9]') { $pwdErrors += "- En az 1 rakam icermeli (0-9)" }
+            if ($pwd -notmatch '[^A-Za-z0-9]') { $pwdErrors += "- En az 1 ozel karakter icermeli (!@#$%)" }
             if ($pwdErrors.Count -gt 0) {
                 [System.Windows.Forms.MessageBox]::Show(
-                    "SA sifresi gecersiz:`n`n" + ($pwdErrors -join "`n"),
-                    "Gecersiz Sifre",
+                    "SA sifresi SQL Server gereksinimlerini karsilamiyor:`n`n" + ($pwdErrors -join "`n") + "`n`nGuclu bir sifre girin.",
+                    "Zayif Sifre",
                     [System.Windows.Forms.MessageBoxButtons]::OK,
                     [System.Windows.Forms.MessageBoxIcon]::Warning
                 )
@@ -2051,14 +1900,13 @@ function Show-InstallGUI {
         }
 
         # Versiyon + edition haritasi (combo index -> SqlDownloadInfo key)
-        # Siralama: Express'ler once, Standard'lar sonra
         $versionMap = @{
-            0 = "2019-express"
-            1 = "2022-express"
-            2 = "2025-express"
-            3 = "2019-standard"
-            4 = "2022-standard"
-            5 = "2025-standard"
+            0 = "2019-standard"
+            1 = "2019-express"
+            2 = "2022-standard"
+            3 = "2022-express"
+            4 = "2025-standard"
+            5 = "2025-express"
         }
 
         # Disk sector fix secimi (artik SQL checkbox event'inda uygulanıyor)
@@ -2072,13 +1920,11 @@ function Show-InstallGUI {
             SqlVersion       = $versionMap[$cmbVersion.SelectedIndex]  # ornek: "2022-standard"
             InstanceName     = $cmbInstance.Text.Trim().ToUpperInvariant()
             SAPassword       = $txtPassword.Text
-            InstallFirewall      = if ($chkSQL.Checked) { $chkFirewall.Checked } else { $false }
-            ConfigSqlProtocols   = if ($chkSQL.Checked) { $chkSqlProtocols.Checked } else { $false }
-            ConfigSqlPerformance = if ($chkSQL.Checked) { $chkSqlPerformance.Checked } else { $false }
-            InstallNativeClient  = $chkNativeClient.Checked
+            InstallFirewall  = if ($chkSQL.Checked) { $chkFirewall.Checked } else { $false }
             SetPowerPlan     = $chkPowerPlan.Checked
             InstallCapital   = $chkCapital.Checked
             InstallBoss      = $chkBoss.Checked
+            EnablePermanentTls = ($chkTls.Enabled -and $chkTls.Checked)
             ApplySectorFix   = $applySectorFix
             SectorNeedsFix   = $DiskSector.NeedsFix
             SectorFixApplied = $DiskSector.RegistryFixApplied
@@ -2896,13 +2742,11 @@ function Main {
                 SqlVersion       = if ($SqlVersion) { $SqlVersion } else { "2019-standard" }
                 InstanceName     = if ($InstanceName) { $InstanceName.ToUpperInvariant() } else { "BAYTTICARISQL" }
                 SAPassword       = if ($SAPass) { $SAPass } else { $Script:SAPassword }
-                InstallFirewall      = $InstallFirewall.IsPresent
-                ConfigSqlProtocols   = $ConfigSqlProtocols.IsPresent
-                ConfigSqlPerformance = $ConfigSqlPerformance.IsPresent
-                InstallNativeClient  = $InstallNativeClient.IsPresent
+                InstallFirewall  = $InstallFirewall.IsPresent
                 SetPowerPlan     = $SetPowerPlan.IsPresent
                 InstallCapital   = $InstallCapital.IsPresent
                 InstallBoss      = $InstallBoss.IsPresent
+                EnablePermanentTls = ($EnablePermanentTls.IsPresent -and -not (Test-PermanentTlsEnabled))
                 ApplySectorFix   = $DiskSectorInfo.NeedsFix -and (-not $DiskSectorInfo.RegistryFixApplied)
                 SectorNeedsFix   = $DiskSectorInfo.NeedsFix
                 SectorFixApplied = $DiskSectorInfo.RegistryFixApplied
@@ -2939,18 +2783,27 @@ function Main {
             Write-Host $sqlLine -ForegroundColor Green
         }
         if ($Selections.ApplySectorFix) { Write-Host "  |  [+] Disk Sektor Boyutu Fix (4KB)      |" -ForegroundColor Yellow }
-        if ($Selections.InstallFirewall)      { Write-Host "  |  [+] Firewall Kurallari (1433/1434)    |" -ForegroundColor Green }
-        if ($Selections.ConfigSqlProtocols)   { Write-Host "  |  [+] SQL Protokol Yapilandirmasi       |" -ForegroundColor Green }
-        if ($Selections.ConfigSqlPerformance) { Write-Host "  |  [+] SQL Performans Ayarlari           |" -ForegroundColor Green }
-        if ($Selections.InstallNativeClient)  { Write-Host "  |  [+] SQL Native Client 2012            |" -ForegroundColor Green }
+        if ($Selections.InstallFirewall) { Write-Host "  |  [+] Firewall Kurallari (1433/1434)    |" -ForegroundColor Green }
         if ($Selections.SetPowerPlan)    { Write-Host "  |  [+] Guc Plani: Nihai Performans       |" -ForegroundColor Green }
         if ($Selections.InstallCapital)  { Write-Host "  |  [+] Bay.T Capital Kurulumu            |" -ForegroundColor Yellow }
         if ($Selections.InstallBoss)     { Write-Host "  |  [+] Bay.T Boss Kurulumu               |" -ForegroundColor Yellow }
+        if ($Selections.EnablePermanentTls) { Write-Host "  |  [+] TLS 1.2 Kalici Etkinlestirme      |" -ForegroundColor Green }
         Write-Host "  +-----------------------------------------+" -ForegroundColor Cyan
         Write-Host ""
 
         # 2. On gereksinimler
         Test-Prerequisites
+
+        # 2.5. Kalici TLS 1.2 (eski OS icin) - secildiyse uygula
+        if ($Selections.EnablePermanentTls) {
+            Write-Step "TLS 1.2 kalici olarak etkinlestiriliyor (StrongCrypto)..."
+            if (Set-PermanentTls) {
+                Write-OK "TLS 1.2 kalici ayari uygulandi (.NET 4.x StrongCrypto)"
+                Write-Info "Yeni PowerShell oturumlarinda 'iex (irm ...)' TLS ayari olmadan calisir"
+            } else {
+                Write-Warn "TLS kalici ayari uygulanamadi (yonetici izni gerekebilir)"
+            }
+        }
 
         # 3. Visual C++ Runtime
         if ($Selections.InstallVCPP) {
@@ -2997,32 +2850,22 @@ function Main {
 
             if ($InstallSuccess) {
                 $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
-
-                # SQL protokol yapilandirmasi (kullanici secimi)
-                if ($Selections.ConfigSqlProtocols) {
-                    Set-SqlProtocols -InstanceName $SelectedInstance
-                    Set-SqlBrowserService
-                } else {
-                    Write-Info "SQL Protokol yapilandirmasi atlaniyor (secilmedi)"
-                }
+                Set-SqlProtocols -InstanceName $SelectedInstance
+                Set-SqlBrowserService
 
                 # Firewall kurallari
                 if ($Selections.InstallFirewall) {
                     Set-SqlFirewallRules -InstanceName $SelectedInstance
                 }
 
-                # Protokol degisiklikleri varsa servisi yeniden baslat
-                if ($Selections.ConfigSqlProtocols) {
-                    Restart-SqlService -InstanceName $SelectedInstance
-                    $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
+                Restart-SqlService -InstanceName $SelectedInstance
+                $Ready = Wait-SqlServiceReady -InstanceName $SelectedInstance -TimeoutSeconds 120
+
+                if ($Ready) {
+                    Set-SqlPerformanceConfig -InstanceName $SelectedInstance -Version $SelectedVersion
                 }
 
-                # SQL performans ayarlari (kullanici secimi)
-                if ($Ready -and $Selections.ConfigSqlPerformance) {
-                    Set-SqlPerformanceConfig -InstanceName $SelectedInstance -Version $SelectedVersion
-                } elseif (-not $Selections.ConfigSqlPerformance) {
-                    Write-Info "SQL Performans ayarlari atlaniyor (secilmedi)"
-                }
+                Install-NativeClient
 
                 if ($Ready) {
                     Test-FinalConnection -InstanceName $SelectedInstance
@@ -3036,19 +2879,12 @@ function Main {
             Write-Info "SQL Server kurulumu atlaniyor (secilmedi)"
         }
 
-        # 7. SQL Native Client (SQL'den bagimsiz)
-        if ($Selections.InstallNativeClient) {
-            Install-NativeClient
-        } else {
-            Write-Info "SQL Native Client kurulumu atlaniyor (secilmedi)"
-        }
-
-        # 8. Power Plan
+        # 7. Power Plan
         if ($Selections.SetPowerPlan) {
             Set-UltimatePerformancePowerPlan
         }
 
-        # 9. Bay.T Uygulama Kurulumu
+        # 8. Bay.T Uygulama Kurulumu
         if ($Selections.InstallCapital -or $Selections.InstallBoss) {
             Install-BaytApplication -InstallCapital:$Selections.InstallCapital -InstallBoss:$Selections.InstallBoss
         }

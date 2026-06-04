@@ -27,6 +27,29 @@ iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/instal
 
 > **Not:** Yonetici olarak acmadiyisaniz script otomatik olarak yetki yukseltme yapacaktir.
 
+### Eski Isletim Sistemleri (TLS Sorunu)
+
+Windows 7 / 8 / 8.1 ve Windows Server 2012 / 2012 R2 / 2016 / 2019 gibi eski
+sistemlerde PowerShell varsayilan olarak **TLS 1.0/1.1** kullanir. GitHub ise
+yalnizca **TLS 1.2+** kabul ettigi icin tek komut su hatayi verebilir:
+
+```
+irm : The request was aborted: Could not create SSL/TLS secure channel.
+```
+
+Bu durumda komutu indirmeden **once** TLS 1.2'yi acin (tek satir, kopyala-yapistir):
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iex (irm 'https://raw.githubusercontent.com/puffytr/bayt-support-iex/main/install-online.ps1')
+```
+
+> **Kalici cozum:** Kurulum ekranindaki **"TLS 1.2'yi Kalici Etkinlestir (Eski OS)"**
+> secenegi (TLS aktif degilse varsayilan isaretli gelir; zaten aktifse `[AKTIF]`
+> etiketiyle pasif gosterilir) makineye `.NET StrongCrypto` registry ayarini yazar.
+> Bu sayede **sonraki calistirmalarda** sade `iex (irm ...)` komutu TLS satiri
+> olmadan da calisir. (Etkili olmasi icin ayardan sonra yeni bir PowerShell
+> penceresi acmaniz yeterlidir.) Sessiz modda `-EnablePermanentTls` ile uygulanir.
+
 ## Nasil Calisir?
 
 1. Komut calistirilir
@@ -179,6 +202,7 @@ iex (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercont
 | `-SetPowerPlan` | Guc planini Nihai Performans (Ultimate) yap |
 | `-InstallCapital` | Bay.T Capital kurulumunu indir ve baslat |
 | `-InstallBoss` | Bay.T Boss kurulumunu indir ve baslat |
+| `-EnablePermanentTls` | TLS 1.2'yi kalici etkinlestir (eski OS icin) |
 | `-SqlVersion` | SQL versiyonu: `2019`, `2022`, `2025` |
 | `-InstanceName` | SQL instance adi |
 | `-SAPass` | SA sifresi |
