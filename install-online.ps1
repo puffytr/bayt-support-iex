@@ -336,6 +336,90 @@ function Set-PermanentTls {
     return $written
 }
 
+# Kalici TLS secenegi yalnizca eski Windows surumlerinde gosterilir.
+function Test-ShouldShowPermanentTlsOption {
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $build = [int]$os.BuildNumber
+        $isServer = ($os.ProductType -ne 1)
+
+        if ($isServer) {
+            return ($build -lt 17763) # Server 2019 ve ustunde gizle
+        }
+
+        return ($build -lt 10240) # Windows 10 ve ustunde gizle
+    } catch {
+        return $true
+    }
+}
+
+# Yerel Windows parola politikasini okur; okunamazsa en gevsek varsayilana duser.
+function Get-LocalPasswordPolicy {
+    $policy = [ordered]@{
+        MinimumLength = 0
+        ComplexityEnabled = $false
+        Source = "Varsayilan"
+    }
+
+    try {
+        $policyDir = Join-Path $Script:TempBase "policy"
+        New-Item -Path $policyDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+        $policyPath = Join-Path $policyDir "local-security-policy.inf"
+
+        & secedit.exe /export /cfg $policyPath /areas SECURITYPOLICY 2>$null | Out-Null
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $policyPath)) {
+            $content = Get-Content -Path $policyPath -ErrorAction Stop
+            foreach ($line in $content) {
+                if ($line -match '^\s*MinimumPasswordLength\s*=\s*(\d+)') {
+                    $policy.MinimumLength = [int]$matches[1]
+                }
+                if ($line -match '^\s*PasswordComplexity\s*=\s*(\d+)') {
+                    $policy.ComplexityEnabled = ([int]$matches[1] -eq 1)
+                }
+            }
+            $policy.Source = "Yerel Guvenlik Politikasi"
+        }
+    } catch {
+        $policy.Source = "Varsayilan (politika okunamadi)"
+    }
+
+    return [pscustomobject]$policy
+}
+
+# SQL SA sifresini Windows parola politikasina gore dogrular.
+function Test-SqlSAPasswordPolicy {
+    param(
+        [string]$Value,
+        [object]$Policy = (Get-LocalPasswordPolicy)
+    )
+
+    $errors = @()
+    if ([string]::IsNullOrEmpty($Value)) {
+        $errors += "- Sifre bos olamaz"
+        return [pscustomobject]@{ IsValid = $false; Errors = $errors; Policy = $Policy }
+    }
+
+    $minLength = [int]$Policy.MinimumLength
+    if ($Policy.ComplexityEnabled) { $minLength = [math]::Max($minLength, 6) }
+    if ($minLength -gt 0 -and $Value.Length -lt $minLength) {
+        $errors += "- En az $minLength karakter olmali"
+    }
+
+    if ($Policy.ComplexityEnabled) {
+        $classCount = 0
+        if ($Value -cmatch '[A-Z]') { $classCount++ }
+        if ($Value -cmatch '[a-z]') { $classCount++ }
+        if ($Value -match '[0-9]') { $classCount++ }
+        if ($Value -match '[^A-Za-z0-9]') { $classCount++ }
+
+        if ($classCount -lt 3) {
+            $errors += "- En az 3 karakter turu icermeli (buyuk harf, kucuk harf, rakam, ozel karakter)"
+        }
+    }
+
+    return [pscustomobject]@{ IsValid = ($errors.Count -eq 0); Errors = $errors; Policy = $Policy }
+}
+
 # ADO.NET tabanli SQL sorgusu - Invoke-Sqlcmd'ye bagimliligi kaldirir
 function Invoke-SqlNonQuery {
     param(
@@ -1262,6 +1346,8 @@ function Show-InstallGUI {
     $InstalledVC  = Get-InstalledVCRuntimes
     $ExistingSql  = Get-InstalledSqlInstances
     $DiskSector   = Get-DiskSectorInfo
+    $PasswordPolicy = Get-LocalPasswordPolicy
+    $ShowPermanentTlsOption = Test-ShouldShowPermanentTlsOption
 
     # VC++ kurulu sayisi hesapla
     $VCTotal = 6
@@ -1307,10 +1393,11 @@ function Show-InstallGUI {
     $y += 30
 
     # --- Bilesenler GroupBox ---
+    $grpCompHeight = if ($ShowPermanentTlsOption) { 252 } else { 222 }
     $grpComp = New-Object System.Windows.Forms.GroupBox
     $grpComp.Text = "Kurulacak Bilesenler"
     $grpComp.Location = New-Object System.Drawing.Point(15, $y)
-    $grpComp.Size = New-Object System.Drawing.Size(495, 252)
+    $grpComp.Size = New-Object System.Drawing.Size(495, $grpCompHeight)
     $grpComp.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
     $form.Controls.Add($grpComp)
 
@@ -1410,29 +1497,32 @@ function Show-InstallGUI {
     })
 
     # TLS 1.2 Kalici Etkinlestirme Checkbox + durum
-    # Eski OS'larda (Win7/8/8.1, Server 2012-2019) indirme hatalarini onler.
-    $tlsAlreadyEnabled = Test-PermanentTlsEnabled
-    $chkTls = New-Object System.Windows.Forms.CheckBox
-    if ($tlsAlreadyEnabled) {
-        # Zaten aktif: isaretsiz + disabled (kullanici degistiremez)
-        $chkTls.Text = "TLS 1.2'yi Kalici Etkinlestir (Eski OS)  [AKTIF]"
-        $chkTls.Checked = $false
-        $chkTls.Enabled = $false
-        $chkTls.ForeColor = [System.Drawing.Color]::Gray
-    } else {
-        # Aktif degil: varsayilan isaretli
-        $chkTls.Text = "TLS 1.2'yi Kalici Etkinlestir (Eski OS)"
-        $chkTls.Checked = $true
+    # Eski OS'larda (Win7/8/8.1, Server 2012/2012 R2/2016) indirme hatalarini onler.
+    $chkTls = $null
+    if ($ShowPermanentTlsOption) {
+        $tlsAlreadyEnabled = Test-PermanentTlsEnabled
+        $chkTls = New-Object System.Windows.Forms.CheckBox
+        if ($tlsAlreadyEnabled) {
+            # Zaten aktif: isaretsiz + disabled (kullanici degistiremez)
+            $chkTls.Text = "TLS 1.2'yi Kalici Etkinlestir (Eski OS)  [AKTIF]"
+            $chkTls.Checked = $false
+            $chkTls.Enabled = $false
+            $chkTls.ForeColor = [System.Drawing.Color]::Gray
+        } else {
+            # Aktif degil: varsayilan isaretli
+            $chkTls.Text = "TLS 1.2'yi Kalici Etkinlestir (Eski OS)"
+            $chkTls.Checked = $true
+        }
+        $chkTls.Location = New-Object System.Drawing.Point(15, 212)
+        $chkTls.AutoSize = $true
+        $chkTls.Font = $normalFont
+        $grpComp.Controls.Add($chkTls)
     }
-    $chkTls.Location = New-Object System.Drawing.Point(15, 212)
-    $chkTls.AutoSize = $true
-    $chkTls.Font = $normalFont
-    $grpComp.Controls.Add($chkTls)
 
-    $y += 262
+    $y += ($grpCompHeight + 10)
 
     # --- SQL Ayarlari GroupBox ---
-    $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 215 } else { 178 }
+    $grpSqlHeight = if ($ExistingSqlNames.Count -gt 0) { 233 } else { 196 }
     $grpSql = New-Object System.Windows.Forms.GroupBox
     $grpSql.Text = "SQL Server Ayarlari (SQL secildiginde aktif olur)"
     $grpSql.Location = New-Object System.Drawing.Point(15, $y)
@@ -1502,11 +1592,26 @@ function Show-InstallGUI {
     $txtPassword.Font = $normalFont
     $grpSql.Controls.Add($txtPassword)
 
+    $lblPassHint = New-Object System.Windows.Forms.Label
+    if ($PasswordPolicy.ComplexityEnabled) {
+        $effectiveMin = [math]::Max([int]$PasswordPolicy.MinimumLength, 6)
+        $lblPassHint.Text = "Politika: en az $effectiveMin karakter, 3/4 tur (buyuk/kucuk/rakam/ozel)"
+    } elseif ([int]$PasswordPolicy.MinimumLength -gt 0) {
+        $lblPassHint.Text = "Politika: en az $($PasswordPolicy.MinimumLength) karakter, karmasiklik kapali"
+    } else {
+        $lblPassHint.Text = "Politika: minimum uzunluk yok, karmasiklik kapali"
+    }
+    $lblPassHint.Location = New-Object System.Drawing.Point(115, 126)
+    $lblPassHint.Size = New-Object System.Drawing.Size(370, 18)
+    $lblPassHint.Font = New-Object System.Drawing.Font("Segoe UI", 7.5)
+    $lblPassHint.ForeColor = [System.Drawing.Color]::Gray
+    $grpSql.Controls.Add($lblPassHint)
+
     # Firewall checkbox
     $chkFirewall = New-Object System.Windows.Forms.CheckBox
     $chkFirewall.Text = "Firewall Kurallari Olustur (TCP 1433 / UDP 1434)"
     $chkFirewall.Checked = $false
-    $chkFirewall.Location = New-Object System.Drawing.Point(15, 135)
+    $chkFirewall.Location = New-Object System.Drawing.Point(15, 153)
     $chkFirewall.AutoSize = $true
     $chkFirewall.Font = $normalFont
     $grpSql.Controls.Add($chkFirewall)
@@ -1516,7 +1621,7 @@ function Show-InstallGUI {
         $sqlInstStr = ($ExistingSql | ForEach-Object { "$($_.Name) [$($_.Edition)] ($($_.Status))" }) -join ", "
         $lblExistSql = New-Object System.Windows.Forms.Label
         $lblExistSql.Text = "Mevcut instance: $sqlInstStr"
-        $lblExistSql.Location = New-Object System.Drawing.Point(15, 168)
+        $lblExistSql.Location = New-Object System.Drawing.Point(15, 186)
         $lblExistSql.Size = New-Object System.Drawing.Size(470, 35)
         $lblExistSql.Font = $smallFont
         $lblExistSql.ForeColor = [System.Drawing.Color]::OrangeRed
@@ -1906,16 +2011,10 @@ function Show-InstallGUI {
 
         # SA sifre karmasiklik kontrolu
         if ($chkSQL.Checked) {
-            $pwd = $txtPassword.Text
-            $pwdErrors = @()
-            if ($pwd.Length -lt 8) { $pwdErrors += "- En az 8 karakter olmali" }
-            if ($pwd -cnotmatch '[A-Z]') { $pwdErrors += "- En az 1 buyuk harf icermeli (A-Z)" }
-            if ($pwd -cnotmatch '[a-z]') { $pwdErrors += "- En az 1 kucuk harf icermeli (a-z)" }
-            if ($pwd -notmatch '[0-9]') { $pwdErrors += "- En az 1 rakam icermeli (0-9)" }
-            if ($pwd -notmatch '[^A-Za-z0-9]') { $pwdErrors += "- En az 1 ozel karakter icermeli (!@#$%)" }
-            if ($pwdErrors.Count -gt 0) {
+            $passwordPolicyResult = Test-SqlSAPasswordPolicy -Value $txtPassword.Text -Policy $PasswordPolicy
+            if (-not $passwordPolicyResult.IsValid) {
                 [System.Windows.Forms.MessageBox]::Show(
-                    "SA sifresi SQL Server gereksinimlerini karsilamiyor:`n`n" + ($pwdErrors -join "`n") + "`n`nGuclu bir sifre girin.",
+                    "SA sifresi Windows parola politikasini karsilamiyor:`n`n" + ($passwordPolicyResult.Errors -join "`n") + "`n`nKaynak: $($passwordPolicyResult.Policy.Source)",
                     "Zayif Sifre",
                     [System.Windows.Forms.MessageBoxButtons]::OK,
                     [System.Windows.Forms.MessageBoxIcon]::Warning
@@ -1949,7 +2048,7 @@ function Show-InstallGUI {
             SetPowerPlan     = $chkPowerPlan.Checked
             InstallCapital   = $chkCapital.Checked
             InstallBoss      = $chkBoss.Checked
-            EnablePermanentTls = ($chkTls.Enabled -and $chkTls.Checked)
+            EnablePermanentTls = ($chkTls -and $chkTls.Enabled -and $chkTls.Checked)
             ApplySectorFix   = $applySectorFix
             SectorNeedsFix   = $DiskSector.NeedsFix
             SectorFixApplied = $DiskSector.RegistryFixApplied
@@ -2264,7 +2363,8 @@ function Install-SqlServerEngine {
     # -------------------------------------------------------
     # Setup.exe'yi calistir
     # -------------------------------------------------------
-    Write-Info "Komut: setup.exe $($InstallArgs -join ' ')"
+    $MaskedInstallArgs = $InstallArgs | ForEach-Object { if ($_ -like '/SAPWD=*') { '/SAPWD="********"' } else { $_ } }
+    Write-Info "Komut: setup.exe $($MaskedInstallArgs -join ' ')"
     Write-Host ""
 
     $SetupProc = Start-Process -FilePath $SetupExePath -ArgumentList $InstallArgs -Wait -PassThru
@@ -2690,7 +2790,7 @@ function Show-Summary {
     Write-Host "  Instance Adi         : $InstanceName" -ForegroundColor White
     Write-Host "  Baglanti Adresi      : $ServerInstance" -ForegroundColor White
     Write-Host "  SA Kullanici Adi     : sa" -ForegroundColor White
-    Write-Host "  SA Sifresi           : $($Script:SAPassword)" -ForegroundColor White
+    Write-Host "  SA Sifresi           : ********" -ForegroundColor White
     Write-Host "  Collation            : Turkish_CI_AS" -ForegroundColor White
     Write-Host ""
 
@@ -2705,7 +2805,7 @@ function Show-Summary {
     Write-Host "  Baglanti ornegi (SSMS/sqlcmd):" -ForegroundColor Cyan
     Write-Host "    Server: $ServerInstance" -ForegroundColor Gray
     Write-Host "    Login : sa" -ForegroundColor Gray
-    Write-Host "    Pass  : $($Script:SAPassword)" -ForegroundColor Gray
+    Write-Host "    Pass  : ********" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  ONEMLI: SA sifresini uretim ortaminda degistirin!" -ForegroundColor Yellow
     Write-Host "  NOT: BaytTicariSQL/BaytBossSQL instance'lari icin sifre degisimi" -ForegroundColor DarkCyan
@@ -2771,7 +2871,7 @@ function Main {
                 SetPowerPlan     = $SetPowerPlan.IsPresent
                 InstallCapital   = $InstallCapital.IsPresent
                 InstallBoss      = $InstallBoss.IsPresent
-                EnablePermanentTls = ($EnablePermanentTls.IsPresent -and -not (Test-PermanentTlsEnabled))
+                EnablePermanentTls = ($EnablePermanentTls.IsPresent -and (Test-ShouldShowPermanentTlsOption) -and -not (Test-PermanentTlsEnabled))
                 ApplySectorFix   = $DiskSectorInfo.NeedsFix -and (-not $DiskSectorInfo.RegistryFixApplied)
                 SectorNeedsFix   = $DiskSectorInfo.NeedsFix
                 SectorFixApplied = $DiskSectorInfo.RegistryFixApplied
@@ -2790,6 +2890,18 @@ function Main {
         # SA password guncelle
         if ($Selections.InstallSQL -and $Selections.SAPassword) {
             $Script:SAPassword = $Selections.SAPassword
+        }
+
+        # SA sifresi Windows parola politikasina uygun mu?
+        if ($Selections.InstallSQL) {
+            $passwordPolicyResult = Test-SqlSAPasswordPolicy -Value $Script:SAPassword
+            if (-not $passwordPolicyResult.IsValid) {
+                Write-Err "SA sifresi Windows parola politikasini karsilamiyor:"
+                foreach ($err in $passwordPolicyResult.Errors) { Write-Err "  $err" }
+                Write-Info "Parola politikasi kaynagi: $($passwordPolicyResult.Policy.Source)"
+                return
+            }
+            Write-OK "SA sifresi Windows parola politikasina uygun"
         }
 
         # Secilen bilesenleri goster
